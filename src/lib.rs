@@ -3,12 +3,16 @@ pub mod task;
 pub mod taskflow;
 pub mod subflow;
 pub mod future;
+pub mod algorithms;
 
 pub use executor::Executor;
 pub use task::{Task, TaskHandle};
 pub use taskflow::Taskflow;
 pub use subflow::Subflow;
 pub use future::TaskflowFuture;
+
+// Re-export parallel algorithms
+pub use algorithms::{parallel_for_each, parallel_reduce, parallel_transform, parallel_sort};
 
 #[cfg(test)]
 mod tests {

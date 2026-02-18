@@ -40,12 +40,12 @@
   - [x] LIFO execution for own tasks, FIFO for stealing
   - [x] Atomic dependency tracking
 
-- [ ] **Parallel Algorithms**
-  - [ ] `parallel_for` - parallel iteration over ranges
-  - [ ] `parallel_reduce` - parallel reduction
-  - [ ] `parallel_transform` - parallel map operation
-  - [ ] `parallel_sort` - parallel sorting
-  - [ ] `parallel_scan` - parallel prefix sum
+- [x] **Parallel Algorithms**
+  - [x] `parallel_for` - parallel iteration over ranges
+  - [x] `parallel_reduce` - parallel reduction
+  - [x] `parallel_transform` - parallel map operation
+  - [x] `parallel_sort` - parallel sorting
+  - [x] `parallel_scan` - parallel prefix sum
 
 - [ ] **Better Condition Support**
   - [ ] Multi-way branching (select successor based on condition)

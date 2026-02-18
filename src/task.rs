@@ -76,6 +76,7 @@ impl TaskHandle {
         other.precede(self);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_id(&self) -> TaskId {
         self.id
     }

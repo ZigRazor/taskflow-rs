@@ -8,8 +8,8 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Lock-Free Work-Stealing Executor** - High-performance multi-threaded scheduler with per-worker queues
 - ✅ **Subflows** - Create nested task graphs for recursive parallelism
 - ✅ **Condition Tasks** - Control flow with conditional branching
+- ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort` primitives
 - ✅ **Graph Visualization** - Export task graphs to DOT format
-- 🚧 **Parallel Algorithms** - for_each, reduce, sort (planned)
 - 🚧 **Async Tasks** - Dynamic task creation (planned)
 - 🚧 **GPU Support** - CUDA integration (planned)
 
@@ -98,6 +98,90 @@ println!("{}", dot);
 ```
 
 Paste the output at [GraphViz Online](https://dreampuf.github.io/GraphvizOnline/) to visualize.
+
+### Parallel Algorithms
+
+TaskFlow-RS provides high-level parallel algorithm primitives:
+
+#### Parallel For-Each
+
+Apply a function to each element in parallel:
+
+```rust
+use taskflow_rs::{Executor, Taskflow, parallel_for_each};
+
+let mut executor = Executor::new(4);
+let mut taskflow = Taskflow::new();
+
+let data: Vec<i32> = (0..1000).collect();
+
+parallel_for_each(&mut taskflow, data, 250, |item| {
+    // Process each item in parallel
+    println!("Processing: {}", item);
+});
+
+executor.run(&taskflow).wait();
+```
+
+#### Parallel Reduce
+
+Reduce a collection to a single value in parallel:
+
+```rust
+use taskflow_rs::parallel_reduce;
+
+let data: Vec<i32> = (1..=1000).collect();
+
+let (_task, result) = parallel_reduce(
+    &mut taskflow,
+    data,
+    250,
+    0,  // identity value
+    |acc, item| acc + item
+);
+
+executor.run(&taskflow).wait();
+
+// Get the result
+let sum = *result.lock().unwrap();
+println!("Sum: {}", sum);  // 500500
+```
+
+#### Parallel Transform
+
+Map elements in parallel and collect results:
+
+```rust
+use taskflow_rs::parallel_transform;
+
+let data: Vec<i32> = (0..1000).collect();
+
+let (_tasks, results) = parallel_transform(
+    &mut taskflow,
+    data,
+    250,
+    |x| x * x  // Square each element
+);
+
+executor.run(&taskflow).wait();
+
+let results = results.lock().unwrap();
+println!("Transformed {} items", results.len());
+```
+
+#### Parallel Sort
+
+Sort elements in parallel using merge sort:
+
+```rust
+use taskflow_rs::parallel_sort;
+
+let data: Vec<i32> = vec![5, 2, 8, 1, 9, 3];
+
+parallel_sort(&mut taskflow, data, 100, |a, b| a.cmp(b));
+
+executor.run(&taskflow).wait();
+```
 
 ## API Overview
 
