@@ -36,7 +36,7 @@ impl TaskNode {
 /// Task handle for building task graphs
 #[derive(Clone)]
 pub struct TaskHandle {
-    id: TaskId,
+    pub(crate) id: TaskId,
     graph: Arc<Mutex<Vec<TaskNode>>>,
 }
 

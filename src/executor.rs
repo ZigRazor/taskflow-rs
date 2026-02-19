@@ -6,6 +6,7 @@ use crate::taskflow::Taskflow;
 use crate::task::{TaskWork, TaskId, TaskNode};
 use crate::future::TaskflowFuture;
 use crate::subflow::Subflow;
+use crate::condition::BranchId;
 
 /// Executor - Thread pool for executing taskflows
 pub struct Executor {
@@ -25,10 +26,33 @@ impl Executor {
             num_workers,
         }
     }
+    
+    /// Count all tasks reachable from a set of starting tasks
+    fn count_reachable_tasks(graph: &Arc<Mutex<Vec<TaskNode>>>, start_tasks: &[TaskId]) -> usize {
+        let graph_guard = graph.lock().unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let mut to_visit: Vec<TaskId> = start_tasks.to_vec();
+        
+        while let Some(task_id) = to_visit.pop() {
+            if visited.insert(task_id) {
+                // Find this task's successors
+                if let Some(node) = graph_guard.iter().find(|n| n.id == task_id) {
+                    for succ in &node.successors {
+                        if !visited.contains(succ) {
+                            to_visit.push(*succ);
+                        }
+                    }
+                }
+            }
+        }
+        
+        visited.len()
+    }
 
     /// Run a taskflow once
     pub fn run(&mut self, taskflow: &Taskflow) -> TaskflowFuture {
         let graph = taskflow.get_graph();
+        let conditional_branches = taskflow.get_conditional_branches();
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let condvar = Arc::new(Condvar::new());
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -60,6 +84,7 @@ impl Executor {
         let handles: Vec<_> = (0..self.num_workers)
             .map(|worker_id| {
                 let graph = Arc::clone(&graph);
+                let conditional_branches = Arc::clone(&conditional_branches);
                 let queue = Arc::clone(&queue);
                 let condvar = Arc::clone(&condvar);
                 let shutdown = Arc::clone(&shutdown);
@@ -70,6 +95,7 @@ impl Executor {
                     Self::worker_loop(
                         worker_id,
                         graph,
+                        conditional_branches,
                         queue,
                         condvar,
                         shutdown,
@@ -89,6 +115,7 @@ impl Executor {
     fn worker_loop(
         _worker_id: usize,
         graph: Arc<Mutex<Vec<TaskNode>>>,
+        conditional_branches: Arc<Mutex<HashMap<TaskId, HashMap<BranchId, Vec<TaskId>>>>>,
         queue: Arc<Mutex<VecDeque<TaskId>>>,
         condvar: Arc<Condvar>,
         shutdown: Arc<AtomicBool>,
@@ -135,10 +162,11 @@ impl Executor {
                 };
 
                 // Execute work outside the lock
-                if let Some(work) = work {
+                let branch_taken = if let Some(work) = work {
                     match work {
                         TaskWork::Static(func) => {
                             func();
+                            None  // Not a conditional task
                         }
                         TaskWork::Subflow(func) => {
                             let next_id = Arc::new(Mutex::new({
@@ -177,21 +205,63 @@ impl Executor {
                                 drop(queue_guard);
                                 condvar.notify_all();
                             }
+                            None  // Not a conditional task
                         }
                         TaskWork::Condition(func) => {
-                            let _result = func();
+                            let branch_result = func();
+                            Some(branch_result)  // Return which branch was taken
                         }
                     }
-                }
+                } else {
+                    None
+                };
 
                 // Decrement tasks remaining
                 tasks_remaining.fetch_sub(1, Ordering::Release);
+
+                // Determine which successors to activate
+                let successors_to_activate: Vec<TaskId> = if let Some(branch) = branch_taken {
+                    // This was a conditional task - check if branches are registered
+                    let branches_map = conditional_branches.lock().unwrap();
+                    if let Some(task_branches) = branches_map.get(&task_id) {
+                        let branch_id = BranchId(branch);
+                        
+                        // Count how many tasks are in branches that were NOT selected
+                        // These tasks will never execute, so we need to decrement tasks_remaining for them
+                        let mut unreachable_count = 0;
+                        for (other_branch_id, other_successors) in task_branches.iter() {
+                            if *other_branch_id != branch_id {
+                                // This branch was not selected - count its tasks as unreachable
+                                unreachable_count += Self::count_reachable_tasks(&graph, other_successors);
+                            }
+                        }
+                        
+                        // Decrement tasks_remaining for unreachable tasks
+                        if unreachable_count > 0 {
+                            tasks_remaining.fetch_sub(unreachable_count, Ordering::Release);
+                        }
+                        
+                        if let Some(branch_successors) = task_branches.get(&branch_id) {
+                            // Use the specific branch successors
+                            branch_successors.clone()
+                        } else {
+                            // Branch not found, use default successors (convert from HashSet)
+                            successors.into_iter().collect()
+                        }
+                    } else {
+                        // No branches registered, use default successors (convert from HashSet)
+                        successors.into_iter().collect()
+                    }
+                } else {
+                    // Not a conditional task, use all successors (convert from HashSet)
+                    successors.into_iter().collect()
+                };
 
                 // Update successor dependencies and enqueue ready tasks
                 let dep_map = dep_count.lock().unwrap();
                 let mut ready_tasks = Vec::new();
                 
-                for succ_id in successors {
+                for succ_id in successors_to_activate {
                     if let Some(count) = dep_map.get(&succ_id) {
                         let prev = count.fetch_sub(1, Ordering::AcqRel);
                         if prev == 1 {
