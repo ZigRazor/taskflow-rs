@@ -10,5 +10,17 @@ repository = "https://github.com/yourusername/taskflow-rs"
 [dependencies]
 num_cpus = "1.16"
 crossbeam = "0.8"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"], optional = true }
+futures = { version = "0.3", optional = true }
+
+[features]
+default = []
+async = ["tokio", "futures"]
 
 [dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+# Examples that require specific features
+[[example]]
+name = "async_tasks"
+required-features = ["async"]

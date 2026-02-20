@@ -1,13 +1,20 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
 
+#[cfg(feature = "async")]
+use std::future::Future;
+#[cfg(feature = "async")]
+use std::pin::Pin;
+
 pub type TaskId = usize;
 
-/// Task work - either a static closure or a subflow
+/// Task work - either a static closure, subflow, condition, or async task
 pub enum TaskWork {
     Static(Box<dyn FnOnce() + Send + 'static>),
     Subflow(Box<dyn FnOnce(&mut crate::Subflow) + Send + 'static>),
     Condition(Box<dyn FnOnce() -> usize + Send + 'static>),
+    #[cfg(feature = "async")]
+    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'static>),
 }
 
 /// Internal task node structure

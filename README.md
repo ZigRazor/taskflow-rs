@@ -9,8 +9,8 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Subflows** - Create nested task graphs for recursive parallelism
 - ✅ **Condition Tasks** - Control flow with conditional branching
 - ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort` primitives
+- ✅ **Async Task Support** - Integration with Rust's async/await and Tokio runtime
 - ✅ **Graph Visualization** - Export task graphs to DOT format
-- 🚧 **Async Tasks** - Dynamic task creation (planned)
 - 🚧 **GPU Support** - CUDA integration (planned)
 
 ## Quick Start
@@ -182,6 +182,57 @@ parallel_sort(&mut taskflow, data, 100, |a, b| a.cmp(b));
 
 executor.run(&taskflow).wait();
 ```
+
+### Async Tasks
+
+TaskFlow-RS supports asynchronous tasks with Tokio integration (requires `async` feature):
+
+```toml
+[dependencies]
+taskflow-rs = { version = "0.1", features = ["async"] }
+tokio = { version = "1", features = ["full"] }
+```
+
+#### Basic Async Tasks
+
+```rust
+use taskflow_rs::{AsyncExecutor, Taskflow};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() {
+    let executor = AsyncExecutor::new(4);
+    let mut taskflow = Taskflow::new();
+    
+    let task = taskflow.emplace_async(|| async {
+        // Async work
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        println!("Done!");
+    });
+    
+    executor.run(&taskflow);
+}
+```
+
+#### Mixed Sync and Async
+
+```rust
+// Sync task
+let sync = taskflow.emplace(|| {
+    println!("Sync work");
+});
+
+// Async task
+let async_task = taskflow.emplace_async(|| async {
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    println!("Async work");
+});
+
+// Dependencies work across sync/async
+sync.precede(&async_task);
+```
+
+**See [ASYNC_TASKS.md](ASYNC_TASKS.md) for comprehensive async documentation.**
 
 ## API Overview
 

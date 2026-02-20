@@ -95,6 +95,25 @@ impl Taskflow {
     pub(crate) fn get_conditional_branches(&self) -> Arc<Mutex<HashMap<TaskId, HashMap<BranchId, Vec<TaskId>>>>> {
         Arc::clone(&self.conditional_branches)
     }
+    
+    /// Create an async task (requires 'async' feature)
+    #[cfg(feature = "async")]
+    pub fn emplace_async<F, Fut>(&mut self, work: F) -> TaskHandle
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let work_boxed: Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + 'static> = 
+            Box::new(move || Box::pin(work()));
+        
+        let node = TaskNode::new(id, TaskWork::Async(work_boxed));
+        self.graph.lock().unwrap().push(node);
+
+        TaskHandle::new(id, Arc::clone(&self.graph))
+    }
 
     /// Get the internal graph (for executor)
     pub(crate) fn get_graph(&self) -> Arc<Mutex<Vec<TaskNode>>> {

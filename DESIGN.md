@@ -55,10 +55,13 @@
 
 ### Medium Priority
 
-- [ ] **Async Task Support**
-  - [ ] Dynamic task creation from executor
-  - [ ] Async task dependencies
-  - [ ] Integration with Rust async/await
+- [x] **Async Task Support** ✅ COMPLETED
+  - [x] Async task work variant
+  - [x] AsyncExecutor with Tokio runtime
+  - [x] Mixed sync/async workflows
+  - [x] Async task dependencies
+  - [ ] Parallel async execution (sequential for now)
+  - [ ] Async subflows (planned)
 
 - [ ] **Pipeline Support**
   - [ ] Stream processing

@@ -6,12 +6,18 @@ pub mod future;
 pub mod algorithms;
 pub mod condition;
 
+#[cfg(feature = "async")]
+pub mod async_executor;
+
 pub use executor::Executor;
 pub use task::{Task, TaskHandle};
 pub use taskflow::Taskflow;
 pub use subflow::Subflow;
 pub use future::TaskflowFuture;
 pub use condition::{ConditionalHandle, BranchId, Loop};
+
+#[cfg(feature = "async")]
+pub use async_executor::AsyncExecutor;
 
 // Re-export parallel algorithms
 pub use algorithms::{parallel_for_each, parallel_reduce, parallel_transform, parallel_sort};

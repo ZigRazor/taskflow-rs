@@ -211,6 +211,10 @@ impl Executor {
                             let branch_result = func();
                             Some(branch_result)  // Return which branch was taken
                         }
+                        #[cfg(feature = "async")]
+                        TaskWork::Async(_) => {
+                            panic!("Async tasks require AsyncExecutor. Use AsyncExecutor::new() instead of Executor::new()");
+                        }
                     }
                 } else {
                     None
