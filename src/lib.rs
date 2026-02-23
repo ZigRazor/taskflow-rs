@@ -5,6 +5,7 @@ pub mod subflow;
 pub mod future;
 pub mod algorithms;
 pub mod condition;
+pub mod pipeline;
 
 #[cfg(feature = "async")]
 pub mod async_executor;
@@ -15,6 +16,7 @@ pub use taskflow::Taskflow;
 pub use subflow::Subflow;
 pub use future::TaskflowFuture;
 pub use condition::{ConditionalHandle, BranchId, Loop};
+pub use pipeline::{ConcurrentPipeline, Token, StageType};
 
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;
@@ -53,5 +55,13 @@ mod tests {
         d.succeed(&c);  // d runs after c (c -> d)
 
         executor.run(&taskflow).wait();
+    }
+    
+    #[test]
+    fn test_pipeline_exports() {
+        // Verify types are exported
+        let _pipeline: ConcurrentPipeline<i32> = ConcurrentPipeline::new(10, 100);
+        let _token: Token<i32> = Token::new(42, 0);
+        let _stage_type: StageType = StageType::Serial;
     }
 }

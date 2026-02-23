@@ -63,11 +63,14 @@
   - [ ] Parallel async execution (sequential for now)
   - [ ] Async subflows (planned)
 
-- [ ] **Pipeline Support**
-  - [ ] Stream processing
-  - [ ] Parallel and serial stages
-  - [ ] Token management
-  - [ ] Backpressure handling
+- [x] **Pipeline Support** ✅ COMPLETED
+  - [x] ConcurrentPipeline with token management
+  - [x] Backpressure handling with configurable buffers
+  - [x] Thread-safe producer-consumer pattern
+  - [x] Multi-stage pipeline support
+  - [x] Parallel and serial stage patterns
+  - [ ] Type-safe pipeline builder (planned)
+  - [ ] Built-in metrics and monitoring (planned)
 
 - [ ] **Composition**
   - [ ] Compose taskflows from other taskflows

@@ -10,6 +10,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Condition Tasks** - Control flow with conditional branching
 - ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort` primitives
 - ✅ **Async Task Support** - Integration with Rust's async/await and Tokio runtime
+- ✅ **Pipeline Support** - Stream processing with parallel/serial stages, token management, and backpressure
 - ✅ **Graph Visualization** - Export task graphs to DOT format
 - 🚧 **GPU Support** - CUDA integration (planned)
 
@@ -233,6 +234,70 @@ sync.precede(&async_task);
 ```
 
 **See [ASYNC_TASKS.md](ASYNC_TASKS.md) for comprehensive async documentation.**
+
+### Pipeline Processing
+
+TaskFlow-RS provides concurrent pipelines for stream processing with automatic backpressure:
+
+```rust
+use taskflow_rs::pipeline::{ConcurrentPipeline, Token};
+use std::thread;
+
+let pipeline = ConcurrentPipeline::new(
+    10,   // buffer_size (backpressure threshold)
+    100   // max_tokens (total capacity)
+);
+
+// Producer thread
+let p = pipeline.clone();
+thread::spawn(move || {
+    for i in 0..100 {
+        p.push(i).unwrap();
+    }
+    p.stop();
+});
+
+// Consumer thread
+let c = pipeline.clone();
+thread::spawn(move || {
+    while !c.is_stopped() {
+        if let Some(token) = c.try_pop() {
+            println!("Processed: {}", token.data);
+        }
+    }
+});
+```
+
+#### Multi-Stage Pipeline
+
+```rust
+use taskflow_rs::pipeline::ConcurrentPipeline;
+
+// Create pipeline stages
+let input = ConcurrentPipeline::new(10, 100);
+let output = ConcurrentPipeline::new(10, 100);
+
+// Parallel processing stage (4 workers)
+for worker_id in 0..4 {
+    let i = input.clone();
+    let o = output.clone();
+    
+    thread::spawn(move || {
+        while let Some(token) = i.try_pop() {
+            let result = process(token.data);
+            o.push(result).ok();
+        }
+    });
+}
+```
+
+**Features:**
+- Token management with unique IDs
+- Automatic backpressure handling
+- Thread-safe concurrent access
+- Configurable buffer sizes
+
+**See [PIPELINE.md](PIPELINE.md) for comprehensive pipeline documentation.**
 
 ## API Overview
 
