@@ -111,6 +111,134 @@ impl Executor {
 
         TaskflowFuture::new(handles, shutdown)
     }
+    
+    /// Run a taskflow N times sequentially
+    /// 
+    /// **Note**: Creates a new taskflow for each iteration using the provided factory function.
+    /// This is necessary because task closures (FnOnce) can only execute once.
+    /// 
+    /// # Example
+    /// ```
+    /// use taskflow_rs::{Executor, Taskflow};
+    /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    /// 
+    /// let mut executor = Executor::new(4);
+    /// let counter = Arc::new(AtomicUsize::new(0));
+    /// 
+    /// executor.run_n(5, || {
+    ///     let mut taskflow = Taskflow::new();
+    ///     let c = counter.clone();
+    ///     taskflow.emplace(move || {
+    ///         c.fetch_add(1, Ordering::Relaxed);
+    ///         println!("Processing...");
+    ///     });
+    ///     taskflow
+    /// }).wait();
+    /// 
+    /// assert_eq!(counter.load(Ordering::Relaxed), 5);
+    /// ```
+    pub fn run_n<F>(&mut self, n: usize, mut factory: F) -> TaskflowFuture
+    where
+        F: FnMut() -> Taskflow,
+    {
+        if n == 0 {
+            return self.run(&factory());
+        }
+        
+        // Run n-1 times and wait
+        for _ in 0..n-1 {
+            let taskflow = factory();
+            self.run(&taskflow).wait();
+        }
+        
+        // Return the future for the last run
+        let taskflow = factory();
+        self.run(&taskflow)
+    }
+    
+    /// Run a taskflow repeatedly until a predicate returns true
+    /// 
+    /// Creates a new taskflow for each iteration using the provided factory function.
+    /// The predicate is checked after each execution.
+    /// 
+    /// # Example
+    /// ```
+    /// use taskflow_rs::{Executor, Taskflow};
+    /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    /// 
+    /// let mut executor = Executor::new(4);
+    /// let sum = Arc::new(AtomicUsize::new(0));
+    /// 
+    /// let s = sum.clone();
+    /// executor.run_until(
+    ///     || {
+    ///         let mut taskflow = Taskflow::new();
+    ///         let s = sum.clone();
+    ///         taskflow.emplace(move || {
+    ///             s.fetch_add(5, Ordering::Relaxed);
+    ///         });
+    ///         taskflow
+    ///     },
+    ///     move || s.load(Ordering::Relaxed) >= 50
+    /// ).wait();
+    /// ```
+    pub fn run_until<F, P>(&mut self, mut factory: F, mut predicate: P) -> TaskflowFuture
+    where
+        F: FnMut() -> Taskflow,
+        P: FnMut() -> bool,
+    {
+        loop {
+            let taskflow = factory();
+            self.run(&taskflow).wait();
+            if predicate() {
+                break;
+            }
+        }
+        
+        // Return a completed future (last iteration already waited)
+        let taskflow = factory();
+        self.run(&taskflow)
+    }
+    
+    /// Run multiple taskflows concurrently
+    /// 
+    /// Executes all taskflows in parallel and returns a vector of futures.
+    /// 
+    /// # Example
+    /// ```
+    /// let mut executor = Executor::new(4);
+    /// let flow1 = create_taskflow_1();
+    /// let flow2 = create_taskflow_2();
+    /// let flow3 = create_taskflow_3();
+    /// 
+    /// let futures = executor.run_many(&[&flow1, &flow2, &flow3]);
+    /// 
+    /// // Wait for all to complete
+    /// for future in futures {
+    ///     future.wait();
+    /// }
+    /// ```
+    pub fn run_many(&mut self, taskflows: &[&Taskflow]) -> Vec<TaskflowFuture> {
+        taskflows.iter()
+            .map(|tf| self.run(tf))
+            .collect()
+    }
+    
+    /// Run multiple taskflows concurrently and wait for all to complete
+    /// 
+    /// This is a convenience method that runs all taskflows and waits for completion.
+    /// 
+    /// # Example
+    /// ```
+    /// let mut executor = Executor::new(4);
+    /// executor.run_many_and_wait(&[&flow1, &flow2, &flow3]);
+    /// ```
+    pub fn run_many_and_wait(&mut self, taskflows: &[&Taskflow]) {
+        let futures = self.run_many(taskflows);
+        for future in futures {
+            future.wait();
+        }
+    }
 
     fn worker_loop(
         _worker_id: usize,

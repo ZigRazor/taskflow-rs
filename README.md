@@ -12,6 +12,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Async Task Support** - Integration with Rust's async/await and Tokio runtime
 - ✅ **Pipeline Support** - Stream processing with parallel/serial stages, token management, and backpressure
 - ✅ **Composition** - Build complex workflows from reusable task graph components
+- ✅ **Run Variants** - Execute taskflows N times, until conditions, or concurrently
 - ✅ **Graph Visualization** - Export task graphs to DOT format
 - 🚧 **GPU Support** - CUDA integration (planned)
 
@@ -361,6 +362,61 @@ for _ in 0..3 {
 - Fan-out/fan-in patterns
 
 **See [COMPOSITION.md](COMPOSITION.md) for comprehensive composition documentation.**
+
+### Run Variants
+
+Execute taskflows with flexible patterns - multiple times, conditionally, or concurrently:
+
+```rust
+use taskflow_rs::{Executor, Taskflow};
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+let mut executor = Executor::new(4);
+let counter = Arc::new(AtomicUsize::new(0));
+
+// Run N times (factory pattern)
+let c = counter.clone();
+executor.run_n(10, move || {
+    let mut taskflow = Taskflow::new();
+    let c = c.clone();
+    taskflow.emplace(move || {
+        c.fetch_add(1, Ordering::Relaxed);
+        println!("Processing...");
+    });
+    taskflow
+}).wait();
+
+// Run until condition
+let c = counter.clone();
+let c_check = counter.clone();
+executor.run_until(
+    move || {
+        let mut taskflow = Taskflow::new();
+        let c = c.clone();
+        taskflow.emplace(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        taskflow
+    },
+    move || c_check.load(Ordering::Relaxed) >= 50
+).wait();
+
+// Run multiple flows concurrently
+let flow1 = create_flow_1();
+let flow2 = create_flow_2();
+let flow3 = create_flow_3();
+
+executor.run_many_and_wait(&[&flow1, &flow2, &flow3]);
+```
+
+**Use cases:**
+- Batch processing (run_n)
+- Convergence loops (run_until)
+- Parallel pipelines (run_many)
+- Retry logic
+- Training epochs
+
+**See [RUN_VARIANTS.md](RUN_VARIANTS.md) for comprehensive documentation.**
 
 ## API Overview
 

@@ -80,10 +80,13 @@
   - [ ] Work cloning for full composition (placeholder for now)
   - [ ] Parameterized compositions (planned)
 
-- [ ] **Run Variants**
-  - [ ] `run_n(taskflow, n)` - run N times
-  - [ ] `run_until(taskflow, predicate)` - run until condition
-  - [ ] Multiple concurrent taskflows
+- [x] **Run Variants** ✅ COMPLETED
+  - [x] `run_n(taskflow, n)` - run N times sequentially
+  - [x] `run_until(taskflow, predicate)` - run until condition
+  - [x] `run_many(taskflows)` - multiple concurrent taskflows
+  - [x] `run_many_and_wait(taskflows)` - convenience method
+  - [ ] Parallel run_n (run N instances concurrently) - planned
+  - [ ] Async variants (run_n_async, run_until_async) - planned
 
 ### Low Priority
 
