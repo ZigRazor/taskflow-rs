@@ -72,10 +72,13 @@
   - [ ] Type-safe pipeline builder (planned)
   - [ ] Built-in metrics and monitoring (planned)
 
-- [ ] **Composition**
-  - [ ] Compose taskflows from other taskflows
-  - [ ] Module tasks
-  - [ ] Reusable task graphs
+- [x] **Composition** ✅ COMPLETED
+  - [x] Compose taskflows from other taskflows
+  - [x] Reusable task graph components (Composition)
+  - [x] Entry/exit point interfaces (CompositionBuilder)
+  - [x] Sequential and parallel composition patterns
+  - [ ] Work cloning for full composition (placeholder for now)
+  - [ ] Parameterized compositions (planned)
 
 - [ ] **Run Variants**
   - [ ] `run_n(taskflow, n)` - run N times

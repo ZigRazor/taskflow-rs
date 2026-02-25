@@ -11,6 +11,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort` primitives
 - ✅ **Async Task Support** - Integration with Rust's async/await and Tokio runtime
 - ✅ **Pipeline Support** - Stream processing with parallel/serial stages, token management, and backpressure
+- ✅ **Composition** - Build complex workflows from reusable task graph components
 - ✅ **Graph Visualization** - Export task graphs to DOT format
 - 🚧 **GPU Support** - CUDA integration (planned)
 
@@ -298,6 +299,68 @@ for worker_id in 0..4 {
 - Configurable buffer sizes
 
 **See [PIPELINE.md](PIPELINE.md) for comprehensive pipeline documentation.**
+
+### Composition
+
+Build complex workflows from reusable task graph components:
+
+```rust
+use taskflow_rs::{Taskflow, Composition, CompositionBuilder, TaskflowComposable};
+
+// Create a reusable component
+fn create_processor() -> Composition {
+    let mut builder = CompositionBuilder::new();
+    
+    let load = builder.taskflow_mut().emplace(|| {
+        println!("Load");
+    });
+    
+    let process = builder.taskflow_mut().emplace(|| {
+        println!("Process");
+    });
+    
+    let save = builder.taskflow_mut().emplace(|| {
+        println!("Save");
+    });
+    
+    load.precede(&process);
+    process.precede(&save);
+    
+    // Define entry/exit points
+    builder.mark_entries(&[load]);
+    builder.mark_exits(&[save]);
+    
+    builder.build()
+}
+
+// Use the component multiple times
+let mut main_flow = Taskflow::new();
+let processor = create_processor();
+
+// Compose it three times in parallel
+let start = main_flow.emplace(|| println!("Start"));
+let end = main_flow.emplace(|| println!("End"));
+
+for _ in 0..3 {
+    let instance = main_flow.compose(&processor);
+    
+    // Connect to workflow
+    for entry in instance.entries() {
+        start.precede(entry);
+    }
+    for exit in instance.exits() {
+        exit.precede(&end);
+    }
+}
+```
+
+**Features:**
+- Reusable task graph components
+- Multiple entry/exit points
+- Sequential and parallel composition
+- Fan-out/fan-in patterns
+
+**See [COMPOSITION.md](COMPOSITION.md) for comprehensive composition documentation.**
 
 ## API Overview
 

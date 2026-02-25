@@ -72,15 +72,23 @@ impl TaskHandle {
             node.successors.insert(other.id);
         }
         
-        // Update other's dependents
+        // Update other's dependents and increment num_dependents
         if let Some(node) = graph.iter_mut().find(|n| n.id == other.id) {
-            node.dependents.insert(self.id);
+            if node.dependents.insert(self.id) {
+                // Only increment if this is a new dependency (insert returns true if newly inserted)
+                node.num_dependents += 1;
+            }
         }
     }
 
     /// Make this task succeed another task (other -> this)
     pub fn succeed(&self, other: &TaskHandle) {
         other.precede(self);
+    }
+    
+    /// Get the task ID
+    pub fn id(&self) -> TaskId {
+        self.id
     }
 
     #[allow(dead_code)]

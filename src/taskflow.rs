@@ -119,6 +119,13 @@ impl Taskflow {
     pub(crate) fn get_graph(&self) -> Arc<Mutex<Vec<TaskNode>>> {
         Arc::clone(&self.graph)
     }
+    
+    /// Get next available task ID and increment (for composition)
+    pub(crate) fn next_id(&mut self) -> TaskId {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
 
     /// Dump the taskflow to DOT format
     pub fn dump(&self) -> String {

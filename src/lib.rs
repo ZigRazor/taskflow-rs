@@ -6,6 +6,7 @@ pub mod future;
 pub mod algorithms;
 pub mod condition;
 pub mod pipeline;
+pub mod composition;
 
 #[cfg(feature = "async")]
 pub mod async_executor;
@@ -17,6 +18,7 @@ pub use subflow::Subflow;
 pub use future::TaskflowFuture;
 pub use condition::{ConditionalHandle, BranchId, Loop};
 pub use pipeline::{ConcurrentPipeline, Token, StageType};
+pub use composition::{Composition, CompositionBuilder, ComposedInstance, TaskflowComposable};
 
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;
