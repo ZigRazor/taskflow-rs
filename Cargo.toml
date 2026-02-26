@@ -12,10 +12,15 @@ num_cpus = "1.16"
 crossbeam = "0.8"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"], optional = true }
 futures = { version = "0.3", optional = true }
+cudarc = { version = "0.11", features = ["std", "driver"], optional = true }
 
 [features]
 default = []
 async = ["tokio", "futures"]
+gpu = ["cudarc", "cudarc/cuda-12000"]
+# Alternative CUDA versions (comment out line 22 and uncomment one below):
+# gpu = ["cudarc", "cudarc/cuda-11080"]  # CUDA 11.8
+# gpu = ["cudarc", "cudarc/cuda-12050"]  # CUDA 12.5
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -24,3 +29,11 @@ tokio = { version = "1", features = ["full"] }
 [[example]]
 name = "async_tasks"
 required-features = ["async"]
+
+[[example]]
+name = "gpu_tasks"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_pipeline"
+required-features = ["gpu"]

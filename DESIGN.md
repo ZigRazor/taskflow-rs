@@ -90,10 +90,16 @@
 
 ### Low Priority
 
-- [ ] **GPU Support**
-  - [ ] CUDA task integration
-  - [ ] Data transfer management
-  - [ ] GPU-CPU synchronization
+- [x] **GPU Support** ✅ COMPLETED
+  - [x] CUDA device integration via cudarc
+  - [x] GPU buffer management (GpuBuffer)
+  - [x] Host-device data transfers
+  - [x] GPU-CPU synchronization
+  - [x] Launch configuration (GpuTaskConfig)
+  - [x] Heterogeneous task graphs
+  - [ ] Asynchronous transfers (planned)
+  - [ ] Multiple CUDA streams (planned)
+  - [ ] OpenCL/ROCm backends (planned)
 
 - [ ] **Advanced Features**
   - [ ] Task priorities

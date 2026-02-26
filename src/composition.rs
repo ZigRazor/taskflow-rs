@@ -1,13 +1,11 @@
-use std::sync::{Arc, Mutex};
 use crate::taskflow::Taskflow;
-use crate::task::{TaskHandle, TaskNode, TaskId};
+use crate::task::{TaskHandle, TaskId};
 
 /// A module task - a reusable task graph component with defined entry/exit points
 pub struct ModuleTask {
     name: String,
     entry_points: Vec<TaskHandle>,
     exit_points: Vec<TaskHandle>,
-    internal_graph: Arc<Mutex<Vec<TaskNode>>>,
 }
 
 impl ModuleTask {
@@ -17,7 +15,6 @@ impl ModuleTask {
             name: name.to_string(),
             entry_points: Vec::new(),
             exit_points: Vec::new(),
-            internal_graph: Arc::new(Mutex::new(Vec::new())),
         }
     }
     
@@ -108,19 +105,43 @@ impl Composition {
     
     /// Compose this into another taskflow
     pub fn compose_into(&self, target: &mut Taskflow) -> ComposedInstance {
+        eprintln!("\nDEBUG compose_into:");
+        eprintln!("  Entry task IDs in composition: {:?}", 
+                 self.entry_tasks.iter().map(|h| h.id).collect::<Vec<_>>());
+        eprintln!("  Exit task IDs in composition: {:?}", 
+                 self.exit_tasks.iter().map(|h| h.id).collect::<Vec<_>>());
+        
         // Copy all tasks from this composition into the target
         let id_mapping = self.clone_graph_into(target);
         
+        eprintln!("  ID mapping: {:?}", id_mapping);
+        
         // Map entry and exit points
         let new_entries = self.entry_tasks.iter()
-            .filter_map(|h| id_mapping.get(&h.id).copied())
-            .map(|id| TaskHandle::new(id, target.get_graph()))
+            .filter_map(|h| {
+                let mapped = id_mapping.get(&h.id).copied();
+                eprintln!("  Mapping entry {} -> {:?}", h.id, mapped);
+                mapped
+            })
+            .map(|id| {
+                eprintln!("    Creating handle for entry task {}", id);
+                TaskHandle::new(id, target.get_graph())
+            })
             .collect::<Vec<_>>();
             
         let new_exits = self.exit_tasks.iter()
-            .filter_map(|h| id_mapping.get(&h.id).copied())
-            .map(|id| TaskHandle::new(id, target.get_graph()))
+            .filter_map(|h| {
+                let mapped = id_mapping.get(&h.id).copied();
+                eprintln!("  Mapping exit {} -> {:?}", h.id, mapped);
+                mapped
+            })
+            .map(|id| {
+                eprintln!("    Creating handle for exit task {}", id);
+                TaskHandle::new(id, target.get_graph())
+            })
             .collect::<Vec<_>>();
+        
+        eprintln!("  Result: {} entries, {} exits\n", new_entries.len(), new_exits.len());
         
         // Debug: warn if entries/exits are empty
         if new_entries.is_empty() {
@@ -148,10 +169,14 @@ impl Composition {
         let source_graph = self.taskflow.get_graph();
         let source_guard = source_graph.lock().unwrap();
         
+        eprintln!("DEBUG clone_graph_into: source has {} tasks", source_guard.len());
+        
         let mut id_mapping = HashMap::new();
         
         // First pass: create all tasks with their work
         for node in source_guard.iter() {
+            eprintln!("  Cloning task {} (name: '{}')", node.id, node.name);
+            
             // Create a placeholder task with visible work
             let node_name = node.name.clone();
             let new_task = target.emplace(move || {
@@ -162,6 +187,7 @@ impl Composition {
             
             // Get the actual ID from the task handle
             let new_id = new_task.id;
+            eprintln!("    Mapped {} -> {}", node.id, new_id);
             id_mapping.insert(node.id, new_id);
             
             // Copy name
@@ -173,18 +199,22 @@ impl Composition {
         }
         
         // Second pass: recreate dependencies
+        eprintln!("  Recreating dependencies...");
         for node in source_guard.iter() {
             let new_id = id_mapping[&node.id];
             let new_handle = TaskHandle::new(new_id, target.get_graph());
             
+            eprintln!("    Task {} (now {}) has {} successors", node.id, new_id, node.successors.len());
             for succ_id in &node.successors {
                 if let Some(&new_succ_id) = id_mapping.get(succ_id) {
+                    eprintln!("      {} -> {}", new_id, new_succ_id);
                     let succ_handle = TaskHandle::new(new_succ_id, target.get_graph());
                     new_handle.precede(&succ_handle);
                 }
             }
         }
         
+        eprintln!("  Clone complete: {} tasks cloned", id_mapping.len());
         id_mapping
     }
     

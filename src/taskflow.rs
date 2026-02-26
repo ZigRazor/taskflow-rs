@@ -121,6 +121,7 @@ impl Taskflow {
     }
     
     /// Get next available task ID and increment (for composition)
+    #[allow(dead_code)]
     pub(crate) fn next_id(&mut self) -> TaskId {
         let id = self.next_id;
         self.next_id += 1;

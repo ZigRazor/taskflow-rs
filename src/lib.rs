@@ -11,6 +11,10 @@ pub mod composition;
 #[cfg(feature = "async")]
 pub mod async_executor;
 
+// GPU module - always exists but contents depend on feature flag
+pub mod gpu;
+
+
 pub use executor::Executor;
 pub use task::{Task, TaskHandle};
 pub use taskflow::Taskflow;
@@ -22,6 +26,9 @@ pub use composition::{Composition, CompositionBuilder, ComposedInstance, Taskflo
 
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;
+
+// GPU types are always exported (stubs when feature is disabled)
+pub use gpu::{GpuDevice, GpuBuffer, GpuTaskConfig};
 
 // Re-export parallel algorithms
 pub use algorithms::{parallel_for_each, parallel_reduce, parallel_transform, parallel_sort};

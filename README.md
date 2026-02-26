@@ -13,8 +13,8 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Pipeline Support** - Stream processing with parallel/serial stages, token management, and backpressure
 - ✅ **Composition** - Build complex workflows from reusable task graph components
 - ✅ **Run Variants** - Execute taskflows N times, until conditions, or concurrently
+- ✅ **GPU Support** - CUDA integration for heterogeneous CPU-GPU computing
 - ✅ **Graph Visualization** - Export task graphs to DOT format
-- 🚧 **GPU Support** - CUDA integration (planned)
 
 ## Quick Start
 
@@ -417,6 +417,75 @@ executor.run_many_and_wait(&[&flow1, &flow2, &flow3]);
 - Training epochs
 
 **See [RUN_VARIANTS.md](RUN_VARIANTS.md) for comprehensive documentation.**
+
+### GPU Support
+
+Integrate CUDA GPU tasks seamlessly into your task graphs for heterogeneous computing:
+
+```rust
+use taskflow_rs::{Executor, Taskflow, GpuDevice, GpuBuffer};
+use std::sync::Arc;
+
+// Initialize GPU
+let device = GpuDevice::new(0).expect("CUDA device required");
+
+let mut executor = Executor::new(4);
+let mut taskflow = Taskflow::new();
+
+let data = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+// CPU task: Generate data
+let d1 = data.clone();
+let generate = taskflow.emplace(move || {
+    let mut data = d1.lock().unwrap();
+    *data = (0..1024).map(|i| i as f32).collect();
+    println!("Generated data on CPU");
+});
+
+// GPU task: Process on device
+let d2 = data.clone();
+let dev = device.clone();
+let process_gpu = taskflow.emplace(move || {
+    let data = d2.lock().unwrap();
+    
+    // Allocate GPU memory
+    let mut gpu_buf = GpuBuffer::allocate(&dev, data.len()).unwrap();
+    
+    // Transfer to GPU
+    gpu_buf.copy_from_host(&data).unwrap();
+    
+    // Compute on GPU
+    dev.synchronize().unwrap();
+    
+    println!("Processed on GPU");
+});
+
+// CPU task: Validate
+let validate = taskflow.emplace(|| {
+    println!("Validated results");
+});
+
+// Build heterogeneous pipeline
+generate.precede(&process_gpu);
+process_gpu.precede(&validate);
+
+executor.run(&taskflow).wait();
+```
+
+**Features:**
+- CUDA integration via cudarc
+- Efficient host-device data transfers
+- GPU-CPU synchronization
+- Multi-GPU support
+- Heterogeneous task graphs
+
+**Prerequisites:**
+- NVIDIA GPU with CUDA support
+- CUDA Toolkit 11.0+
+- Default uses CUDA 12.0 - if you have a different version, edit the `gpu` feature in `Cargo.toml` (see GPU_SETUP.md)
+- Build with `--features gpu`
+
+**See [GPU.md](GPU.md) for comprehensive GPU documentation.**
 
 ## API Overview
 
