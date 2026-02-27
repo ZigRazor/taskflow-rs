@@ -101,11 +101,14 @@
   - [ ] Multiple CUDA streams (planned)
   - [ ] OpenCL/ROCm backends (planned)
 
-- [ ] **Advanced Features**
-  - [ ] Task priorities
-  - [ ] Task cancellation
-  - [ ] Custom schedulers
-  - [ ] NUMA-aware scheduling
+- [x] **Advanced Features** ✅ COMPLETED
+  - [x] Task priorities (Priority enum with Low/Normal/High/Critical)
+  - [x] Task cancellation (CancellationToken with cooperative cancellation)
+  - [x] Custom schedulers (Scheduler trait with FIFO, Priority, RoundRobin implementations)
+  - [x] NUMA-aware scheduling (Topology detection, worker pinning strategies)
+  - [ ] Preemptive cancellation (planned)
+  - [ ] Dynamic priority adjustment (planned)
+  - [ ] Hardware topology integration with hwloc (planned)
 
 - [ ] **Tooling**
   - [ ] Profiler integration
@@ -118,16 +121,19 @@
 ### Why Arc<Mutex<Vec<TaskNode>>>?
 
 **Pros:**
+
 - Simple to implement
 - Thread-safe shared ownership
 - Works with Rust's ownership system
 
 **Cons:**
+
 - Performance overhead from mutex locks
 - Not lock-free
 - Potential contention with many workers
 
 **Alternatives to Consider:**
+
 - Lock-free data structures (crossbeam)
 - Per-worker task queues
 - Immutable task graphs with runtime state
@@ -137,6 +143,7 @@
 **Implemented: Work stealing ✅**
 
 Each worker has its own lock-free deque:
+
 - Workers push/pop from their own queue (back)
 - Workers steal from others' queues (front)
 - Better cache locality
@@ -144,6 +151,7 @@ Each worker has its own lock-free deque:
 - Implemented using `crossbeam::deque`
 
 **Implementation:**
+
 ```rust
 use crossbeam::deque::{Worker, Stealer};
 
@@ -159,6 +167,7 @@ struct Executor {
 ```
 
 **Benefits achieved:**
+
 - ~7x speedup on 8 cores for parallel workloads
 - Minimal lock contention
 - Good cache locality
@@ -168,6 +177,7 @@ struct Executor {
 **Current Issue:** Dependencies tracked globally in each TaskNode
 
 **Better Approach:**
+
 - Runtime dependency counter separate from graph
 - Lock-free atomic counters
 - Per-execution state vs graph structure
@@ -189,11 +199,13 @@ struct ExecutionState {
 **Current:** Tasks own their closures with `Box<dyn FnOnce()>`
 
 **Considerations:**
+
 - One-time execution vs reusable tasks
 - Memory cleanup after execution
 - Support for multiple runs
 
 **Ideas:**
+
 - Separate graph structure from execution state
 - Clear execution state between runs
 - Option for reusable tasks with `FnMut`
@@ -292,21 +304,25 @@ pub type Result<T> = std::result::Result<T, TaskflowError>;
 ## Testing Strategy
 
 ### Unit Tests
+
 - Individual task execution
 - Dependency resolution
 - Graph construction
 
 ### Integration Tests
+
 - Complex task graphs
 - Parallel execution
 - Edge cases
 
 ### Performance Tests
+
 - Benchmark against C++ TaskFlow
 - Scalability tests
 - Memory usage profiling
 
 ### Stress Tests
+
 - Large task graphs (millions of tasks)
 - High contention scenarios
 - Long-running workflows
@@ -323,12 +339,14 @@ pub type Result<T> = std::result::Result<T, TaskflowError>;
 ## Benchmark Ideas
 
 Compare with:
+
 - C++ TaskFlow
 - Rayon
 - Tokio (for async tasks)
 - Manual thread pools
 
 Metrics:
+
 - Task throughput
 - Latency
 - Memory overhead

@@ -7,6 +7,9 @@ pub mod algorithms;
 pub mod condition;
 pub mod pipeline;
 pub mod composition;
+pub mod advanced;
+pub mod scheduler;
+pub mod numa;
 
 #[cfg(feature = "async")]
 pub mod async_executor;
@@ -23,6 +26,9 @@ pub use future::TaskflowFuture;
 pub use condition::{ConditionalHandle, BranchId, Loop};
 pub use pipeline::{ConcurrentPipeline, Token, StageType};
 pub use composition::{Composition, CompositionBuilder, ComposedInstance, TaskflowComposable};
+pub use advanced::{Priority, CancellationToken, TaskMetadata};
+pub use scheduler::{Scheduler, FifoScheduler, PriorityScheduler, RoundRobinScheduler};
+pub use numa::{NumaTopology, NumaNode, NumaPinning};
 
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;

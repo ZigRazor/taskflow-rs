@@ -14,6 +14,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Composition** - Build complex workflows from reusable task graph components
 - ✅ **Run Variants** - Execute taskflows N times, until conditions, or concurrently
 - ✅ **GPU Support** - CUDA integration for heterogeneous CPU-GPU computing
+- ✅ **Advanced Features** - Task priorities, cancellation, custom schedulers, NUMA-aware scheduling
 - ✅ **Graph Visualization** - Export task graphs to DOT format
 
 ## Quick Start
@@ -486,6 +487,66 @@ executor.run(&taskflow).wait();
 - Build with `--features gpu`
 
 **See [GPU.md](GPU.md) for comprehensive GPU documentation.**
+
+### Advanced Features
+
+Fine-tune performance with priorities, cancellation, custom schedulers, and NUMA awareness:
+
+```rust
+use taskflow_rs::{
+    Executor, Taskflow, Priority, CancellationToken,
+    PriorityScheduler, Scheduler, NumaTopology
+};
+
+// Task Priorities
+let mut scheduler = PriorityScheduler::new();
+scheduler.push(1, Priority::Critical);
+scheduler.push(2, Priority::Normal);
+scheduler.push(3, Priority::Low);
+
+// Executes in priority order: Critical > Normal > Low
+while let Some(task_id) = scheduler.pop() {
+    println!("Task {}", task_id);
+}
+
+// Task Cancellation
+let token = CancellationToken::new();
+let t = token.clone();
+
+let mut taskflow = Taskflow::new();
+taskflow.emplace(move || {
+    for i in 0..100 {
+        if t.is_cancelled() {
+            println!("Cancelled at {}", i);
+            return;
+        }
+        process_item(i);
+    }
+});
+
+// Cancel from another thread
+token.cancel();
+
+// NUMA Awareness
+let topology = NumaTopology::detect();
+println!("NUMA nodes: {}", topology.num_nodes);
+
+if topology.has_numa() {
+    // Optimize for NUMA architecture
+    for node in &topology.nodes {
+        println!("Node {}: {} CPUs", node.id, node.cpus.len());
+    }
+}
+```
+
+**Features:**
+- Priority-based scheduling (4 levels)
+- Cooperative task cancellation
+- Custom scheduler interface
+- NUMA topology detection
+- Worker-to-CPU pinning strategies
+
+**See [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for comprehensive documentation.**
 
 ## API Overview
 
