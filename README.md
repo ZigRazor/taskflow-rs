@@ -15,6 +15,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Run Variants** - Execute taskflows N times, until conditions, or concurrently
 - ✅ **GPU Support** - CUDA integration for heterogeneous CPU-GPU computing
 - ✅ **Advanced Features** - Task priorities, cancellation, custom schedulers, NUMA-aware scheduling
+- ✅ **Tooling** - Profiler, visualization, performance monitoring, debug logging
 - ✅ **Graph Visualization** - Export task graphs to DOT format
 
 ## Quick Start
@@ -547,6 +548,65 @@ if topology.has_numa() {
 - Worker-to-CPU pinning strategies
 
 **See [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for comprehensive documentation.**
+
+### Tooling
+
+Comprehensive profiling, visualization, and monitoring for performance analysis:
+
+```rust
+use taskflow_rs::*;
+
+// Profiling
+let profiler = Profiler::new(4);
+profiler.enable();
+profiler.start_run();
+
+executor.run(&taskflow).wait();
+
+if let Some(profile) = profiler.get_profile() {
+    println!("{}", profile.summary());
+    
+    // Generate HTML report
+    let html = generate_html_report(&profile);
+    std::fs::write("report.html", html)?;
+}
+
+// Performance Monitoring
+let metrics = PerformanceMetrics::new(4);
+metrics.start();
+
+// Record events
+metrics.record_task_completion(Duration::from_millis(10));
+metrics.record_task_steal();
+
+println!("Tasks/sec: {:.2}", metrics.tasks_per_second());
+println!("Worker utilization: {:.2}%", metrics.average_worker_utilization());
+
+// Debug Logging
+let logger = DebugLogger::new();
+logger.enable();
+logger.set_log_level(LogLevel::Debug);
+
+logger.info("Executor", "Starting execution");
+logger.debug("Worker-0", "Processing task");
+logger.save_to_file("execution.log")?;
+
+// Visualization
+let dot = generate_dot_graph(&tasks, &dependencies);
+std::fs::write("taskflow.dot", dot)?;
+// Generate PNG: dot -Tpng taskflow.dot -o taskflow.png
+```
+
+**Features:**
+- Execution profiler with statistics
+- DOT graph generation (Graphviz)
+- SVG timeline visualization
+- HTML reports with charts
+- Real-time performance metrics
+- Structured debug logging
+- Worker utilization tracking
+
+**See [TOOLING.md](TOOLING.md) for comprehensive documentation.**
 
 ## API Overview
 

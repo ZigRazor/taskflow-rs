@@ -10,6 +10,10 @@ pub mod composition;
 pub mod advanced;
 pub mod scheduler;
 pub mod numa;
+pub mod profiler;
+pub mod visualization;
+pub mod monitoring;
+pub mod debug;
 
 #[cfg(feature = "async")]
 pub mod async_executor;
@@ -29,6 +33,14 @@ pub use composition::{Composition, CompositionBuilder, ComposedInstance, Taskflo
 pub use advanced::{Priority, CancellationToken, TaskMetadata};
 pub use scheduler::{Scheduler, FifoScheduler, PriorityScheduler, RoundRobinScheduler};
 pub use numa::{NumaTopology, NumaNode, NumaPinning};
+pub use profiler::{Profiler, ExecutionProfile, TaskStats};
+pub use visualization::{
+    generate_dot_graph, save_dot_graph,
+    generate_timeline_svg, save_timeline_svg,
+    generate_html_report, save_html_report
+};
+pub use monitoring::PerformanceMetrics;
+pub use debug::{DebugLogger, LogLevel, LogEntry};
 
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;
