@@ -67,8 +67,16 @@
   - [x] AsyncExecutor with Tokio runtime
   - [x] Mixed sync/async workflows
   - [x] Async task dependencies
-  - [ ] Parallel async execution (sequential for now)
-  - [ ] Async subflows (planned)
+  - [x] Parallel async execution ✅ COMPLETED
+    - [x] JoinSet-based parallel task spawning
+    - [x] Automatic dependency management
+    - [x] Mixed sync/async task support
+    - [x] Parallel execution of independent tasks
+    - [x] Concurrent I/O operations
+  - [x] Async subflows ✅ COMPLETED
+    - [x] Dynamic async task creation
+    - [x] Nested async execution
+    - [x] Subflow dependency tracking
 
 - [x] **Pipeline Support** ✅ COMPLETED
   - [x] ConcurrentPipeline with token management

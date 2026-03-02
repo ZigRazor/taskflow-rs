@@ -18,6 +18,7 @@ use crate::subflow::Subflow;
 /// Async executor for running taskflows with async tasks
 #[cfg(feature = "async")]
 pub struct AsyncExecutor {
+    #[allow(dead_code)]
     handle: Handle,
 }
 
@@ -57,7 +58,7 @@ impl AsyncExecutor {
         Self { handle }
     }
     
-    /// Run a taskflow asynchronously
+    /// Run a taskflow asynchronously with parallel execution
     pub async fn run_async(&self, taskflow: &Taskflow) {
         let graph = taskflow.get_graph();
         let conditional_branches = taskflow.get_conditional_branches();
@@ -79,126 +80,180 @@ impl AsyncExecutor {
         }
         
         // Find initial tasks (no dependencies)
-        let mut ready_queue = VecDeque::new();
+        let ready_queue = Arc::new(Mutex::new(VecDeque::new()));
         {
             let graph_guard = graph.lock().unwrap();
             for node in graph_guard.iter() {
                 if node.dependents.is_empty() {
-                    ready_queue.push_back(node.id);
+                    ready_queue.lock().unwrap().push_back(node.id);
                 }
             }
         }
         
-        // Process tasks
-        while let Some(task_id) = ready_queue.pop_front() {
-            // Get task work and successors
-            let (work, successors) = {
-                let mut graph_guard = graph.lock().unwrap();
-                let node = graph_guard.iter_mut().find(|n| n.id == task_id).unwrap();
-                let work = node.work.take();
-                let successors = node.successors.clone();
-                (work, successors)
-            };
+        // Use JoinSet for parallel execution
+        let mut join_set = tokio::task::JoinSet::new();
+        
+        // Process tasks in parallel
+        loop {
+            // Spawn all ready tasks
+            while let Some(task_id) = ready_queue.lock().unwrap().pop_front() {
+                let graph_clone = Arc::clone(&graph);
+                let conditional_branches_clone = Arc::clone(&conditional_branches);
+                let dep_count_clone = Arc::clone(&dep_count);
+                let ready_queue_clone = Arc::clone(&ready_queue);
+                let tasks_remaining_clone = Arc::clone(&tasks_remaining);
+                let completed_tasks_clone = Arc::clone(&completed_tasks);
+                
+                join_set.spawn(async move {
+                    Self::execute_task(
+                        task_id,
+                        graph_clone,
+                        conditional_branches_clone,
+                        dep_count_clone,
+                        ready_queue_clone,
+                        tasks_remaining_clone,
+                        completed_tasks_clone,
+                    ).await
+                });
+            }
             
-            // Execute work
-            let branch_taken = if let Some(work) = work {
-                match work {
-                    TaskWork::Static(func) => {
-                        func();
-                        None
-                    }
-                    TaskWork::Async(func) => {
-                        let future = func();
-                        future.await;
-                        None
-                    }
-                    TaskWork::Subflow(func) => {
-                        let next_id = Arc::new(Mutex::new({
-                            let g = graph.lock().unwrap();
-                            g.len()
-                        }));
-                        
-                        let initial_graph_size = {
-                            let g = graph.lock().unwrap();
-                            g.len()
-                        };
-                        
-                        let mut subflow = Subflow::new(Arc::clone(&graph), next_id);
-                        func(&mut subflow);
-                        
-                        let new_tasks = {
-                            let g = graph.lock().unwrap();
-                            g.len() - initial_graph_size
-                        };
-                        
-                        if new_tasks > 0 {
-                            tasks_remaining.fetch_add(new_tasks, Ordering::Release);
-                            
-                            let mut dep_map = dep_count.lock().unwrap();
-                            let graph_guard = graph.lock().unwrap();
-                            
-                            for i in initial_graph_size..(initial_graph_size + new_tasks) {
-                                let node = &graph_guard[i];
-                                dep_map.insert(node.id, AtomicUsize::new(node.dependents.len()));
-                                
-                                if node.dependents.is_empty() {
-                                    ready_queue.push_back(node.id);
-                                }
-                            }
-                        }
-                        None
-                    }
-                    TaskWork::Condition(func) => {
-                        let branch_result = func();
-                        Some(branch_result)
-                    }
+            // Wait for at least one task to complete
+            if let Some(result) = join_set.join_next().await {
+                if let Err(e) = result {
+                    eprintln!("Task execution error: {:?}", e);
+                }
+                
+                // Check if we're done
+                if tasks_remaining.load(Ordering::Acquire) == 0 {
+                    break;
                 }
             } else {
-                None
-            };
-            
-            // Mark task as completed
-            completed_tasks.lock().unwrap().push(task_id);
-            tasks_remaining.fetch_sub(1, Ordering::Release);
-            
-            // Handle conditional branching
-            let successors_to_activate: Vec<TaskId> = if let Some(branch) = branch_taken {
-                let branches_map = conditional_branches.lock().unwrap();
-                if let Some(task_branches) = branches_map.get(&task_id) {
-                    let branch_id = BranchId(branch);
+                // No more tasks in join set
+                break;
+            }
+        }
+        
+        // Wait for any remaining tasks
+        while join_set.join_next().await.is_some() {}
+    }
+    
+    /// Execute a single task and update dependencies
+    async fn execute_task(
+        task_id: TaskId,
+        graph: Arc<Mutex<Vec<TaskNode>>>,
+        conditional_branches: Arc<Mutex<HashMap<TaskId, HashMap<BranchId, Vec<TaskId>>>>>,
+        dep_count: Arc<Mutex<HashMap<TaskId, AtomicUsize>>>,
+        ready_queue: Arc<Mutex<VecDeque<TaskId>>>,
+        tasks_remaining: Arc<AtomicUsize>,
+        completed_tasks: Arc<Mutex<Vec<TaskId>>>,
+    ) {
+        // Get task work and successors
+        let (work, successors) = {
+            let mut graph_guard = graph.lock().unwrap();
+            let node = graph_guard.iter_mut().find(|n| n.id == task_id).unwrap();
+            let work = node.work.take();
+            let successors = node.successors.clone();
+            (work, successors)
+        };
+        
+        // Execute work
+        let branch_taken = if let Some(work) = work {
+            match work {
+                TaskWork::Static(func) => {
+                    func();
+                    None
+                }
+                TaskWork::Async(func) => {
+                    let future = func();
+                    future.await;
+                    None
+                }
+                TaskWork::Subflow(func) => {
+                    let next_id = Arc::new(Mutex::new({
+                        let g = graph.lock().unwrap();
+                        g.len()
+                    }));
                     
-                    // Count unreachable tasks
-                    let mut unreachable_count = 0;
-                    for (other_branch_id, other_successors) in task_branches.iter() {
-                        if *other_branch_id != branch_id {
-                            unreachable_count += Self::count_reachable_tasks(&graph, other_successors);
+                    let initial_graph_size = {
+                        let g = graph.lock().unwrap();
+                        g.len()
+                    };
+                    
+                    let mut subflow = Subflow::new(Arc::clone(&graph), next_id);
+                    func(&mut subflow);
+                    
+                    let new_tasks = {
+                        let g = graph.lock().unwrap();
+                        g.len() - initial_graph_size
+                    };
+                    
+                    if new_tasks > 0 {
+                        tasks_remaining.fetch_add(new_tasks, Ordering::Release);
+                        
+                        let mut dep_map = dep_count.lock().unwrap();
+                        let graph_guard = graph.lock().unwrap();
+                        
+                        for i in initial_graph_size..(initial_graph_size + new_tasks) {
+                            let node = &graph_guard[i];
+                            dep_map.insert(node.id, AtomicUsize::new(node.dependents.len()));
+                            
+                            if node.dependents.is_empty() {
+                                ready_queue.lock().unwrap().push_back(node.id);
+                            }
                         }
                     }
-                    
-                    if unreachable_count > 0 {
-                        tasks_remaining.fetch_sub(unreachable_count, Ordering::Release);
+                    None
+                }
+                TaskWork::Condition(func) => {
+                    let branch_result = func();
+                    Some(branch_result)
+                }
+            }
+        } else {
+            None
+        };
+        
+        // Mark task as completed
+        completed_tasks.lock().unwrap().push(task_id);
+        tasks_remaining.fetch_sub(1, Ordering::Release);
+        
+        // Handle conditional branching
+        let successors_to_activate: Vec<TaskId> = if let Some(branch) = branch_taken {
+            let branches_map = conditional_branches.lock().unwrap();
+            if let Some(task_branches) = branches_map.get(&task_id) {
+                let branch_id = BranchId(branch);
+                
+                // Count unreachable tasks
+                let mut unreachable_count = 0;
+                for (other_branch_id, other_successors) in task_branches.iter() {
+                    if *other_branch_id != branch_id {
+                        unreachable_count += Self::count_reachable_tasks(&graph, other_successors);
                     }
-                    
-                    if let Some(branch_successors) = task_branches.get(&branch_id) {
-                        branch_successors.clone()
-                    } else {
-                        successors.into_iter().collect()
-                    }
+                }
+                
+                if unreachable_count > 0 {
+                    tasks_remaining.fetch_sub(unreachable_count, Ordering::Release);
+                }
+                
+                if let Some(branch_successors) = task_branches.get(&branch_id) {
+                    branch_successors.clone()
                 } else {
                     successors.into_iter().collect()
                 }
             } else {
                 successors.into_iter().collect()
-            };
-            
-            // Update successor dependencies
-            let dep_map = dep_count.lock().unwrap();
-            for succ_id in successors_to_activate {
-                if let Some(count) = dep_map.get(&succ_id) {
-                    let prev = count.fetch_sub(1, Ordering::AcqRel);
-                    if prev == 1 {
-                        ready_queue.push_back(succ_id);
-                    }
+            }
+        } else {
+            successors.into_iter().collect()
+        };
+        
+        // Update successor dependencies
+        let dep_map = dep_count.lock().unwrap();
+        for succ_id in successors_to_activate {
+            if let Some(count) = dep_map.get(&succ_id) {
+                let prev = count.fetch_sub(1, Ordering::AcqRel);
+                if prev == 1 {
+                    ready_queue.lock().unwrap().push_back(succ_id);
                 }
             }
         }
@@ -216,6 +271,13 @@ impl AsyncExecutor {
             .expect("Failed to create temporary runtime");
         
         rt.block_on(self.run_async(taskflow));
+    }
+    
+    /// Run a taskflow asynchronously and return when complete
+    /// 
+    /// This is an alias for `run_async` for consistency with the sync executor API
+    pub async fn run_await(&self, taskflow: &Taskflow) {
+        self.run_async(taskflow).await
     }
     
     /// Count all tasks reachable from a set of starting tasks

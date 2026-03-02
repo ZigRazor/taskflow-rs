@@ -280,7 +280,7 @@ loop_construct.max_iterations(100);  // Safety limit
 
 ### Async Tasks
 
-TaskFlow-RS supports asynchronous tasks with Tokio integration (requires `async` feature):
+TaskFlow-RS supports **parallel asynchronous task execution** with Tokio integration (requires `async` feature):
 
 ```toml
 [dependencies]
@@ -288,7 +288,9 @@ taskflow-rs = { version = "0.1", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
-#### Basic Async Tasks
+#### Parallel Async Execution
+
+Independent async tasks run in parallel automatically:
 
 ```rust
 use taskflow_rs::{AsyncExecutor, Taskflow};
@@ -299,13 +301,18 @@ async fn main() {
     let executor = AsyncExecutor::new(4);
     let mut taskflow = Taskflow::new();
     
-    let task = taskflow.emplace_async(|| async {
-        // Async work
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        println!("Done!");
-    });
+    // These 5 tasks run in parallel
+    for i in 0..5 {
+        taskflow.emplace_async(move || async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            println!("Task {} done", i);
+        });
+    }
     
-    executor.run(&taskflow);
+    let start = std::time::Instant::now();
+    executor.run_async(&taskflow).await;
+    // Completes in ~100ms (parallel), not 500ms (sequential)
+    println!("Elapsed: {:?}", start.elapsed());
 }
 ```
 
@@ -327,7 +334,30 @@ let async_task = taskflow.emplace_async(|| async {
 sync.precede(&async_task);
 ```
 
-**See [ASYNC_TASKS.md](ASYNC_TASKS.md) for comprehensive async documentation.**
+#### Async Subflows
+
+Dynamic task creation with async execution:
+
+```rust
+taskflow.emplace_subflow(|subflow| {
+    // Create async tasks in subflow
+    for i in 0..3 {
+        subflow.emplace_async(move || async move {
+            println!("Subflow task {}", i);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+    }
+}).name("parent");
+```
+
+**Features:**
+- Parallel execution of independent async tasks
+- JoinSet-based concurrency
+- Automatic dependency management
+- Mixed sync/async support
+- Async subflows
+
+**See [ASYNC_PARALLEL.md](ASYNC_PARALLEL.md) for comprehensive async documentation.**
 
 ### Pipeline Processing
 

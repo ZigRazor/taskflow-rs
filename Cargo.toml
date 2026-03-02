@@ -31,6 +31,10 @@ name = "async_tasks"
 required-features = ["async"]
 
 [[example]]
+name = "async_parallel"
+required-features = ["async"]
+
+[[example]]
 name = "gpu_tasks"
 required-features = ["gpu"]
 
