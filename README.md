@@ -8,7 +8,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Lock-Free Work-Stealing Executor** - High-performance multi-threaded scheduler with per-worker queues
 - ✅ **Subflows** - Create nested task graphs for recursive parallelism
 - ✅ **Condition Tasks** - Control flow with conditional branching
-- ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort` primitives
+- ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort`, `scan` primitives
 - ✅ **Async Task Support** - Integration with Rust's async/await and Tokio runtime
 - ✅ **Pipeline Support** - Stream processing with parallel/serial stages, token management, and backpressure
 - ✅ **Composition** - Build complex workflows from reusable task graph components
@@ -186,6 +186,40 @@ let data: Vec<i32> = vec![5, 2, 8, 1, 9, 3];
 parallel_sort(&mut taskflow, data, 100, |a, b| a.cmp(b));
 
 executor.run(&taskflow).wait();
+```
+
+#### Parallel Scan (Prefix Sum)
+
+Compute prefix sums in parallel:
+
+```rust
+use taskflow_rs::{parallel_inclusive_scan, parallel_exclusive_scan};
+
+let data: Vec<i32> = vec![1, 2, 3, 4, 5];
+
+// Inclusive scan: output[i] = sum of input[0..=i]
+let (_tasks, result) = parallel_inclusive_scan(
+    &mut taskflow,
+    data.clone(),
+    2,  // chunk size
+    |a, b| a + b,  // operation
+    0   // identity
+);
+
+executor.run(&taskflow).wait();
+println!("{:?}", *result.lock().unwrap());  // [1, 3, 6, 10, 15]
+
+// Exclusive scan: output[i] = sum of input[0..i]
+let (_tasks, result) = parallel_exclusive_scan(
+    &mut taskflow,
+    data,
+    2,
+    |a, b| a + b,
+    0
+);
+
+executor.run(&taskflow).wait();
+println!("{:?}", *result.lock().unwrap());  // [0, 1, 3, 6, 10]
 ```
 
 ### Async Tasks

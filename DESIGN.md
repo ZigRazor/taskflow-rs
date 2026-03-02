@@ -45,7 +45,7 @@
   - [x] parallel_reduce - parallel reduction
   - [x] parallel_transform - parallel map
   - [x] parallel_sort - parallel merge sort
-  - [ ] `parallel_scan` - parallel prefix sum
+  - [x] `parallel_scan` - parallel prefix sum (inclusive and exclusive)
 
 - [x] **Better Condition Support** ✅ COMPLETED
   - [x] Multi-way branching (select successor based on condition)

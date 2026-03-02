@@ -298,3 +298,286 @@ mod tests {
         assert_eq!(results.len(), 100);
     }
 }
+
+/// Parallel inclusive scan (prefix sum) - each output element is the sum of all input elements up to and including that position
+/// 
+/// Example: [1, 2, 3, 4] -> [1, 3, 6, 10]
+/// 
+/// # Arguments
+/// * `taskflow` - The taskflow to add tasks to
+/// * `data` - Input data to scan
+/// * `chunk_size` - Size of chunks for parallel processing
+/// * `op` - Binary operation to apply (typically addition, must be associative)
+/// * `identity` - Identity element for the operation
+/// 
+/// # Type Requirements
+/// * `T` must be `Send + Sync + Clone + 'static` - the data type must be safely shared between threads
+/// * `F` must be `Fn(T, T) -> T + Send + Sync + Clone + 'static` - the operation must be thread-safe
+/// 
+/// # Returns
+/// A tuple of (tasks, result) where result is Arc<Mutex<Vec<T>>>
+pub fn parallel_inclusive_scan<T, F>(
+    taskflow: &mut Taskflow,
+    data: Vec<T>,
+    chunk_size: usize,
+    op: F,
+    identity: T,
+) -> (Vec<TaskHandle>, Arc<Mutex<Vec<T>>>)
+where
+    T: Send + Sync + Clone + 'static,
+    F: Fn(T, T) -> T + Send + Sync + Clone + 'static,
+{
+    let data_len = data.len();
+    if data_len == 0 {
+        return (Vec::new(), Arc::new(Mutex::new(Vec::new())));
+    }
+    
+    let num_chunks = (data_len + chunk_size - 1) / chunk_size;
+    let result = Arc::new(Mutex::new(vec![identity.clone(); data_len]));
+    let chunk_sums = Arc::new(Mutex::new(vec![identity.clone(); num_chunks]));
+    let input_data = Arc::new(data);
+    
+    let mut tasks = Vec::new();
+    
+    // Phase 1: Compute local scans for each chunk
+    let mut phase1_tasks = Vec::new();
+    for chunk_id in 0..num_chunks {
+        let data = Arc::clone(&input_data);
+        let result = Arc::clone(&result);
+        let chunk_sums = Arc::clone(&chunk_sums);
+        let op = op.clone();
+        
+        let task = taskflow.emplace(move || {
+            let start = chunk_id * chunk_size;
+            let end = (start + chunk_size).min(data.len());
+            
+            if start >= data.len() {
+                return;
+            }
+            
+            // Compute local inclusive scan
+            let mut sum = data[start].clone();
+            result.lock().unwrap()[start] = sum.clone();
+            
+            for i in (start + 1)..end {
+                sum = op(sum, data[i].clone());
+                result.lock().unwrap()[i] = sum.clone();
+            }
+            
+            // Store the chunk sum
+            chunk_sums.lock().unwrap()[chunk_id] = sum;
+        }).name(&format!("scan_phase1_{}", chunk_id));
+        
+        phase1_tasks.push(task.clone());
+        tasks.push(task);
+    }
+    
+    // Phase 2: Compute prefix sum of chunk sums
+    let chunk_prefixes = Arc::new(Mutex::new(vec![identity.clone(); num_chunks]));
+    let phase2_result = Arc::clone(&chunk_prefixes);
+    let phase2_sums = Arc::clone(&chunk_sums);
+    let op2 = op.clone();
+    
+    let phase2_task = taskflow.emplace(move || {
+        let sums = phase2_sums.lock().unwrap();
+        let mut prefixes = phase2_result.lock().unwrap();
+        
+        if sums.is_empty() {
+            return;
+        }
+        
+        prefixes[0] = sums[0].clone();
+        for i in 1..sums.len() {
+            prefixes[i] = op2(prefixes[i - 1].clone(), sums[i].clone());
+        }
+    }).name("scan_phase2");
+    
+    // Phase 2 depends on all phase 1 tasks
+    for task in &phase1_tasks {
+        task.precede(&phase2_task);
+    }
+    tasks.push(phase2_task.clone());
+    
+    // Phase 3: Add chunk prefixes to local scans
+    for chunk_id in 1..num_chunks {
+        let result = Arc::clone(&result);
+        let prefixes = Arc::clone(&chunk_prefixes);
+        let op = op.clone();
+        
+        let task = taskflow.emplace(move || {
+            let prefix = prefixes.lock().unwrap()[chunk_id - 1].clone();
+            let start = chunk_id * chunk_size;
+            let end = (start + chunk_size).min(result.lock().unwrap().len());
+            
+            let mut result = result.lock().unwrap();
+            for i in start..end {
+                result[i] = op(prefix.clone(), result[i].clone());
+            }
+        }).name(&format!("scan_phase3_{}", chunk_id));
+        
+        phase2_task.precede(&task);
+        tasks.push(task);
+    }
+    
+    (tasks, result)
+}
+
+/// Parallel exclusive scan (prefix sum) - each output element is the sum of all input elements before that position
+/// 
+/// Example: [1, 2, 3, 4] -> [0, 1, 3, 6]
+/// 
+/// # Arguments
+/// * `taskflow` - The taskflow to add tasks to
+/// * `data` - Input data to scan
+/// * `chunk_size` - Size of chunks for parallel processing
+/// * `op` - Binary operation to apply (typically addition, must be associative)
+/// * `identity` - Identity element for the operation
+/// 
+/// # Type Requirements
+/// * `T` must be `Send + Sync + Clone + 'static` - the data type must be safely shared between threads
+/// * `F` must be `Fn(T, T) -> T + Send + Sync + Clone + 'static` - the operation must be thread-safe
+/// 
+/// # Returns
+/// A tuple of (tasks, result) where result is Arc<Mutex<Vec<T>>>
+pub fn parallel_exclusive_scan<T, F>(
+    taskflow: &mut Taskflow,
+    data: Vec<T>,
+    chunk_size: usize,
+    op: F,
+    identity: T,
+) -> (Vec<TaskHandle>, Arc<Mutex<Vec<T>>>)
+where
+    T: Send + Sync + Clone + 'static,
+    F: Fn(T, T) -> T + Send + Sync + Clone + 'static,
+{
+    let data_len = data.len();
+    if data_len == 0 {
+        return (Vec::new(), Arc::new(Mutex::new(Vec::new())));
+    }
+    
+    // Compute inclusive scan first
+    let (tasks, inclusive_result) = parallel_inclusive_scan(taskflow, data, chunk_size, op, identity.clone());
+    
+    // Shift right by one and prepend identity
+    let exclusive_result = Arc::new(Mutex::new(vec![identity; data_len]));
+    let excl = Arc::clone(&exclusive_result);
+    let incl = Arc::clone(&inclusive_result);
+    
+    let shift_task = taskflow.emplace(move || {
+        let inclusive = incl.lock().unwrap();
+        let mut exclusive = excl.lock().unwrap();
+        
+        // Shift: exclusive[i] = inclusive[i-1]
+        for i in 1..exclusive.len() {
+            exclusive[i] = inclusive[i - 1].clone();
+        }
+        // exclusive[0] is already identity
+    }).name("scan_shift");
+    
+    // Shift depends on all scan tasks
+    for task in &tasks {
+        task.precede(&shift_task);
+    }
+    
+    let mut all_tasks = tasks;
+    all_tasks.push(shift_task);
+    
+    (all_tasks, exclusive_result)
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+    use crate::Executor;
+    
+    #[test]
+    fn test_parallel_inclusive_scan() {
+        let mut executor = Executor::new(4);
+        let mut taskflow = Taskflow::new();
+        
+        let data: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        
+        let (_tasks, result) = parallel_inclusive_scan(
+            &mut taskflow,
+            data,
+            2,
+            |a, b| a + b,
+            0
+        );
+        
+        executor.run(&taskflow).wait();
+        
+        let result = result.lock().unwrap();
+        // Expected: [1, 3, 6, 10, 15, 21, 28, 36]
+        assert_eq!(*result, vec![1, 3, 6, 10, 15, 21, 28, 36]);
+    }
+    
+    #[test]
+    fn test_parallel_exclusive_scan() {
+        let mut executor = Executor::new(4);
+        let mut taskflow = Taskflow::new();
+        
+        let data: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        
+        let (_tasks, result) = parallel_exclusive_scan(
+            &mut taskflow,
+            data,
+            2,
+            |a, b| a + b,
+            0
+        );
+        
+        executor.run(&taskflow).wait();
+        
+        let result = result.lock().unwrap();
+        // Expected: [0, 1, 3, 6, 10, 15, 21, 28]
+        assert_eq!(*result, vec![0, 1, 3, 6, 10, 15, 21, 28]);
+    }
+    
+    #[test]
+    fn test_parallel_scan_multiplication() {
+        let mut executor = Executor::new(4);
+        let mut taskflow = Taskflow::new();
+        
+        let data: Vec<i32> = vec![2, 3, 4, 5];
+        
+        let (_tasks, result) = parallel_inclusive_scan(
+            &mut taskflow,
+            data,
+            2,
+            |a, b| a * b,
+            1
+        );
+        
+        executor.run(&taskflow).wait();
+        
+        let result = result.lock().unwrap();
+        // Expected: [2, 6, 24, 120]
+        assert_eq!(*result, vec![2, 6, 24, 120]);
+    }
+    
+    #[test]
+    fn test_parallel_scan_large() {
+        let mut executor = Executor::new(4);
+        let mut taskflow = Taskflow::new();
+        
+        let data: Vec<i32> = (1..=100).collect();
+        
+        let (_tasks, result) = parallel_inclusive_scan(
+            &mut taskflow,
+            data,
+            10,
+            |a, b| a + b,
+            0
+        );
+        
+        executor.run(&taskflow).wait();
+        
+        let result = result.lock().unwrap();
+        // Check last element: sum(1..100) = 5050
+        assert_eq!(result[99], 5050);
+        // Check a few middle elements
+        assert_eq!(result[9], 55);  // sum(1..10)
+        assert_eq!(result[49], 1275); // sum(1..50)
+    }
+}

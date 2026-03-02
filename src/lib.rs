@@ -49,7 +49,14 @@ pub use async_executor::AsyncExecutor;
 pub use gpu::{GpuDevice, GpuBuffer, GpuTaskConfig};
 
 // Re-export parallel algorithms
-pub use algorithms::{parallel_for_each, parallel_reduce, parallel_transform, parallel_sort};
+pub use algorithms::{
+    parallel_for_each, 
+    parallel_reduce, 
+    parallel_transform, 
+    parallel_sort,
+    parallel_inclusive_scan,
+    parallel_exclusive_scan,
+};
 
 #[cfg(test)]
 mod tests {
