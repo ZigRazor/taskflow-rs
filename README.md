@@ -8,6 +8,8 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **Lock-Free Work-Stealing Executor** - High-performance multi-threaded scheduler with per-worker queues
 - ✅ **Subflows** - Create nested task graphs for recursive parallelism
 - ✅ **Condition Tasks** - Control flow with conditional branching
+- ✅ **Cycle Detection** - Detect and prevent cycles in task graphs
+- ✅ **Loop Support** - Explicit loop constructs with iteration control
 - ✅ **Parallel Algorithms** - `for_each`, `reduce`, `transform`, `sort`, `scan` primitives
 - ✅ **Async Task Support** - Integration with Rust's async/await and Tokio runtime
 - ✅ **Pipeline Support** - Stream processing with parallel/serial stages, token management, and backpressure
@@ -221,6 +223,60 @@ let (_tasks, result) = parallel_exclusive_scan(
 executor.run(&taskflow).wait();
 println!("{:?}", *result.lock().unwrap());  // [0, 1, 3, 6, 10]
 ```
+
+### Cycle Detection and Loops
+
+Detect cycles in task graphs and use explicit loop constructs:
+
+```rust
+use taskflow_rs::{CycleDetector, Loop};
+
+// Cycle Detection
+let mut detector = CycleDetector::new();
+
+detector.add_dependency(1, 2);  // 1 -> 2
+detector.add_dependency(2, 3);  // 2 -> 3
+detector.add_dependency(3, 1);  // 3 -> 1 (cycle!)
+
+let result = detector.detect_cycle();
+if result.has_cycle() {
+    println!("Cycle detected: {:?}", result.cycle_path());
+    // Output: Cycle detected: Some([1, 2, 3, 1])
+}
+
+// Topological sort (fails if cycle exists)
+if let Some(sorted) = detector.topological_sort() {
+    println!("Valid execution order: {:?}", sorted);
+} else {
+    println!("Cannot sort: cycle detected!");
+}
+
+// Loop Construct (structural representation)
+let condition = taskflow.emplace(|| {
+    // Check condition
+    println!("Checking loop condition");
+}).name("loop_condition");
+
+let body = taskflow.emplace(|| {
+    println!("Loop iteration");
+}).name("loop_body");
+
+let mut loop_construct = Loop::new(condition);
+loop_construct.add_body_task(body);
+loop_construct.max_iterations(100);  // Safety limit
+
+// Note: Full runtime loop execution requires executor integration
+// Use controlled iteration for now (see examples)
+```
+
+**Features:**
+- DFS-based cycle detection
+- Topological sorting
+- Loop constructs with controlled iteration
+- Strongly connected components
+- Safety limits for maximum iterations
+
+**See [LOOPS_AND_CYCLES.md](LOOPS_AND_CYCLES.md) for comprehensive documentation.**
 
 ### Async Tasks
 

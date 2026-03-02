@@ -51,7 +51,14 @@
   - [x] Multi-way branching (select successor based on condition)
   - [x] Conditional handle with branch registration
   - [x] Integration with conditional tasks in executor
-  - [ ] Loop support (cycle detection and handling) - Partially implemented (see notes)
+  - [x] Loop support (cycle detection and handling) ✅ COMPLETED
+    - [x] DFS-based cycle detection algorithm
+    - [x] Topological sort for valid execution order
+    - [x] Loop construct with iteration control
+    - [x] Strongly connected components analysis
+    - [x] Safety limits (max iterations)
+    - [ ] Runtime loop execution (requires executor integration)
+    - [ ] Dynamic graph modification
 
 ### Medium Priority
 
