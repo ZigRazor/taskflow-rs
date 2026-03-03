@@ -33,7 +33,10 @@ pub use future::TaskflowFuture;
 pub use condition::{ConditionalHandle, BranchId, Loop};
 pub use cycle_detection::{CycleDetector, CycleDetectionResult};
 pub use pipeline::{ConcurrentPipeline, Token, StageType};
-pub use composition::{Composition, CompositionBuilder, ComposedInstance, TaskflowComposable};
+pub use composition::{
+    Composition, CompositionBuilder, ComposedInstance, TaskflowComposable,
+    CloneableWork, CompositionParams, ParamValue, ParameterizedComposition, CompositionFactory
+};
 pub use advanced::{Priority, CancellationToken, TaskMetadata};
 pub use scheduler::{Scheduler, FifoScheduler, PriorityScheduler, RoundRobinScheduler};
 pub use numa::{NumaTopology, NumaNode, NumaPinning};

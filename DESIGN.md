@@ -103,8 +103,16 @@
   - [x] Reusable task graph components (Composition)
   - [x] Entry/exit point interfaces (CompositionBuilder)
   - [x] Sequential and parallel composition patterns
-  - [ ] Work cloning for full composition (placeholder for now)
-  - [ ] Parameterized compositions (planned)
+  - [x] Work cloning for full composition ✅ COMPLETED
+    - [x] CloneableWork wrapper for Fn() closures
+    - [x] Arc-based work sharing
+    - [x] Proper task cloning across compositions
+  - [x] Parameterized compositions ✅ COMPLETED
+    - [x] CompositionParams with typed parameters
+    - [x] ParameterizedComposition factory pattern
+    - [x] Dynamic graph generation based on parameters
+    - [x] Parameter types: Int, Float, String, Bool
+    - [x] Default parameter support
 
 - [x] **Run Variants** ✅ COMPLETED
   - [x] `run_n(taskflow, n)` - run N times sequentially

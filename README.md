@@ -430,21 +430,21 @@ for worker_id in 0..4 {
 Build complex workflows from reusable task graph components:
 
 ```rust
-use taskflow_rs::{Taskflow, Composition, CompositionBuilder, TaskflowComposable};
+use taskflow_rs::{Taskflow, CompositionBuilder, TaskflowComposable};
 
-// Create a reusable component
+// Create a reusable component with cloneable work
 fn create_processor() -> Composition {
     let mut builder = CompositionBuilder::new();
     
-    let load = builder.taskflow_mut().emplace(|| {
+    let load = builder.emplace_cloneable(|| {
         println!("Load");
     });
     
-    let process = builder.taskflow_mut().emplace(|| {
+    let process = builder.emplace_cloneable(|| {
         println!("Process");
     });
     
-    let save = builder.taskflow_mut().emplace(|| {
+    let save = builder.emplace_cloneable(|| {
         println!("Save");
     });
     
@@ -479,11 +479,46 @@ for _ in 0..3 {
 }
 ```
 
+**Parameterized Compositions:**
+
+Create compositions that adapt based on parameters:
+
+```rust
+use taskflow_rs::{ParameterizedComposition, CompositionParams};
+
+// Create a parameterized composition
+let param_comp = ParameterizedComposition::new(|params| {
+    let mut builder = CompositionBuilder::new();
+    
+    let num_workers = params.get_int("workers").unwrap_or(4);
+    
+    let mut tasks = Vec::new();
+    for i in 0..num_workers {
+        let task = builder.emplace_cloneable(move || {
+            println!("Worker {}", i);
+        });
+        tasks.push(task);
+    }
+    
+    builder.mark_entries(&tasks);
+    builder.mark_exits(&tasks);
+    builder.build()
+});
+
+// Instantiate with different parameters
+let mut params = CompositionParams::new();
+params.set_int("workers", 8);
+
+let mut taskflow = Taskflow::new();
+param_comp.compose_into(&mut taskflow, &params);
+```
+
 **Features:**
-- Reusable task graph components
-- Multiple entry/exit points
-- Sequential and parallel composition
-- Fan-out/fan-in patterns
+- ✅ Cloneable work for true reusability
+- ✅ Parameterized compositions
+- ✅ Multiple entry/exit points
+- ✅ Sequential and parallel composition
+- ✅ Fan-out/fan-in patterns
 
 **See [COMPOSITION.md](COMPOSITION.md) for comprehensive composition documentation.**
 
