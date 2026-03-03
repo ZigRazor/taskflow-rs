@@ -7,6 +7,7 @@ pub mod algorithms;
 pub mod condition;
 pub mod cycle_detection;
 pub mod pipeline;
+pub mod typed_pipeline;
 pub mod composition;
 pub mod advanced;
 pub mod scheduler;
@@ -14,6 +15,7 @@ pub mod numa;
 pub mod profiler;
 pub mod visualization;
 pub mod monitoring;
+pub mod metrics;
 pub mod debug;
 
 #[cfg(feature = "async")]
@@ -42,6 +44,8 @@ pub use visualization::{
     generate_html_report, save_html_report
 };
 pub use monitoring::PerformanceMetrics;
+pub use metrics::{Metrics, MetricsSummary};
+pub use typed_pipeline::{TypeSafePipeline, PipelineBuilder, SimplePipeline};
 pub use debug::{DebugLogger, LogLevel, LogEntry};
 
 #[cfg(feature = "async")]

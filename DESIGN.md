@@ -84,8 +84,19 @@
   - [x] Thread-safe producer-consumer pattern
   - [x] Multi-stage pipeline support
   - [x] Parallel and serial stage patterns
-  - [ ] Type-safe pipeline builder (planned)
-  - [ ] Built-in metrics and monitoring (planned)
+  - [x] Type-safe pipeline builder ✅ COMPLETED
+    - [x] Compile-time type checking between stages
+    - [x] TypeSafePipeline for chained transformations
+    - [x] SimplePipeline for in-place mutations
+    - [x] Type inference for pipeline stages
+  - [x] Built-in metrics and monitoring ✅ COMPLETED
+    - [x] Comprehensive Metrics system
+    - [x] Task execution tracking
+    - [x] Worker utilization metrics
+    - [x] Performance monitoring (tasks/sec, duration)
+    - [x] Memory usage tracking
+    - [x] Task timing histogram
+    - [x] Success/failure rate tracking
 
 - [x] **Composition** ✅ COMPLETED
   - [x] Compose taskflows from other taskflows

@@ -18,6 +18,8 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) - a general-pur
 - ✅ **GPU Support** - CUDA integration for heterogeneous CPU-GPU computing
 - ✅ **Advanced Features** - Task priorities, cancellation, custom schedulers, NUMA-aware scheduling
 - ✅ **Tooling** - Profiler, visualization, performance monitoring, debug logging
+- ✅ **Type-Safe Pipelines** - Compile-time type checking for data pipelines
+- ✅ **Built-in Metrics** - Comprehensive metrics and monitoring system
 - ✅ **Graph Visualization** - Export task graphs to DOT format
 
 ## Quick Start
@@ -844,6 +846,40 @@ The executor uses a multi-threaded work-stealing scheduler:
 | Async Tasks | ✅ | 🚧 | Planned |
 | GPU Support | ✅ | 🚧 | Planned |
 | Pipeline | ✅ | 🚧 | Planned |
+
+### Type-Safe Pipelines
+
+Build data processing pipelines with compile-time type checking:
+
+```rust
+use taskflow_rs::TypeSafePipeline;
+
+let pipeline = TypeSafePipeline::new()
+    .stage(|x: i32| x * 2)           // i32 -> i32
+    .stage(|x: i32| x + 10)          // i32 -> i32
+    .stage(|x: i32| x as f64)        // i32 -> f64
+    .stage(|x: f64| format!("{:.2}", x)); // f64 -> String
+
+let result = pipeline.execute(5);  // "20.00"
+```
+
+### Built-in Metrics
+
+```rust
+use taskflow_rs::Metrics;
+
+let metrics = Metrics::new(4);
+metrics.start();
+
+// Track task execution
+metrics.record_task_start(1);
+metrics.record_task_completion(1, 0);
+
+// Get summary
+println!("{}", metrics.summary());
+```
+
+**See examples for comprehensive usage: `cargo run --example typed_pipeline` and `cargo run --example metrics_demo`**
 
 ## Roadmap
 
