@@ -533,7 +533,7 @@ use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 let mut executor = Executor::new(4);
 let counter = Arc::new(AtomicUsize::new(0));
 
-// Run N times (factory pattern)
+// Run N instances in parallel (NEW!)
 let c = counter.clone();
 executor.run_n(10, move || {
     let mut taskflow = Taskflow::new();
@@ -544,6 +544,9 @@ executor.run_n(10, move || {
     });
     taskflow
 }).wait();
+
+// Or run sequentially
+executor.run_n_sequential(5, || create_taskflow()).wait();
 
 // Run until condition
 let c = counter.clone();
@@ -568,14 +571,34 @@ let flow3 = create_flow_3();
 executor.run_many_and_wait(&[&flow1, &flow2, &flow3]);
 ```
 
+**Async variants available:**
+```rust
+use taskflow_rs::AsyncExecutor;
+
+let executor = AsyncExecutor::new(4);
+
+// Parallel async execution
+executor.run_n_async(10, || create_async_taskflow()).await;
+
+// Sequential async execution
+executor.run_n_sequential_async(5, || create_async_taskflow()).await;
+
+// Async conditional execution
+executor.run_until_async(
+    || create_async_taskflow(),
+    || condition_met()
+).await;
+```
+
 **Use cases:**
-- Batch processing (run_n)
+- Batch processing (run_n) - now parallel!
 - Convergence loops (run_until)
 - Parallel pipelines (run_many)
 - Retry logic
 - Training epochs
+- Monte Carlo simulations
 
-**See [RUN_VARIANTS.md](RUN_VARIANTS.md) for comprehensive documentation.**
+**See [PARALLEL_RUN.md](PARALLEL_RUN.md) and [RUN_VARIANTS.md](RUN_VARIANTS.md) for comprehensive documentation.**
 
 ### GPU Support
 

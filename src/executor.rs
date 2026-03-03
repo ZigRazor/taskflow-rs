@@ -137,7 +137,20 @@ impl Executor {
     /// 
     /// assert_eq!(counter.load(Ordering::Relaxed), 5);
     /// ```
-    pub fn run_n<F>(&mut self, n: usize, mut factory: F) -> TaskflowFuture
+    /// Run N instances of a taskflow sequentially
+    /// 
+    /// Creates N taskflows using the factory and runs them one after another.
+    /// 
+    /// # Example
+    /// ```
+    /// let mut executor = Executor::new(4);
+    /// executor.run_n_sequential(3, || {
+    ///     let mut taskflow = Taskflow::new();
+    ///     taskflow.emplace(|| println!("Task"));
+    ///     taskflow
+    /// }).wait();
+    /// ```
+    pub fn run_n_sequential<F>(&mut self, n: usize, mut factory: F) -> TaskflowFuture
     where
         F: FnMut() -> Taskflow,
     {
@@ -156,6 +169,62 @@ impl Executor {
         self.run(&taskflow)
     }
     
+    /// Run N instances of a taskflow concurrently
+    ///
+    /// Creates N taskflows and runs them in parallel.
+    /// Uses thread-based parallelism to execute multiple instances simultaneously.
+    ///
+    /// # Example
+    /// ```
+    /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    /// let mut executor = Executor::new(4);
+    /// let counter = Arc::new(AtomicUsize::new(0));
+    ///
+    /// executor.run_n(3, || {
+    ///     let c = counter.clone();
+    ///     let mut taskflow = Taskflow::new();
+    ///     taskflow.emplace(move || {
+    ///         c.fetch_add(1, Ordering::Relaxed);
+    ///     });
+    ///     taskflow
+    /// }).wait();
+    /// ```
+   pub fn run_n<F>(&mut self, n: usize, factory: F) -> TaskflowFuture
+    where
+        F: Fn() -> Taskflow + Send + Sync + 'static,
+    {
+        if n == 0 {
+            return self.run(&factory());
+        }
+        
+        if n == 1 {
+            return self.run(&factory());
+        }
+        
+        let factory = Arc::new(factory);
+        let num_workers = self.num_workers;
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        
+        // Spawn threads to run instances in parallel
+        let mut handles = Vec::new();
+        
+        for _ in 0..n {
+            let factory = factory.clone();
+            
+            let handle = std::thread::spawn(move || {
+                // Create a new executor for this instance
+                let mut executor = Executor::new(num_workers);
+                let taskflow = factory();
+                executor.run(&taskflow).wait();
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Return a TaskflowFuture that will wait for all threads
+        TaskflowFuture::new(handles, shutdown)
+    }
+
     /// Run a taskflow repeatedly until a predicate returns true
     /// 
     /// Creates a new taskflow for each iteration using the provided factory function.

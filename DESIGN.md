@@ -119,8 +119,16 @@
   - [x] `run_until(taskflow, predicate)` - run until condition
   - [x] `run_many(taskflows)` - multiple concurrent taskflows
   - [x] `run_many_and_wait(taskflows)` - convenience method
-  - [ ] Parallel run_n (run N instances concurrently) - planned
-  - [ ] Async variants (run_n_async, run_until_async) - planned
+  - [x] Parallel run_n (run N instances concurrently) ✅ COMPLETED
+    - [x] Thread-based parallel execution
+    - [x] run_n for concurrent instances
+    - [x] run_n_sequential for sequential instances
+    - [x] Shared state support with Arc/Mutex
+  - [x] Async variants (run_n_async, run_until_async) ✅ COMPLETED
+    - [x] run_n_async for parallel async instances
+    - [x] run_n_sequential_async for sequential async instances
+    - [x] run_until_async for conditional async execution
+    - [x] Full tokio integration
 
 ### Low Priority
 

@@ -280,6 +280,134 @@ impl AsyncExecutor {
         self.run_async(taskflow).await
     }
     
+    /// Run N instances of a taskflow concurrently (async version)
+    /// 
+    /// Creates N taskflows and runs them in parallel asynchronously.
+    /// All instances execute concurrently using the async executor.
+    /// 
+    /// # Example
+    /// ```
+    /// use taskflow_rs::{AsyncExecutor, Taskflow};
+    /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    /// 
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let executor = AsyncExecutor::new(4);
+    ///     let counter = Arc::new(AtomicUsize::new(0));
+    ///     
+    ///     executor.run_n_async(3, || {
+    ///         let c = counter.clone();
+    ///         let mut taskflow = Taskflow::new();
+    ///         taskflow.emplace_async(move || async move {
+    ///             c.fetch_add(1, Ordering::Relaxed);
+    ///         });
+    ///         taskflow
+    ///     }).await;
+    /// }
+    /// ```
+    #[cfg(feature = "async")]
+    pub async fn run_n_async<F>(&self, n: usize, factory: F)
+    where
+        F: Fn() -> Taskflow + Send + Sync,
+    {
+        if n == 0 {
+            return self.run_async(&factory()).await;
+        }
+        
+        if n == 1 {
+            return self.run_async(&factory()).await;
+        }
+        
+        // Create N taskflows and run them concurrently
+        let mut handles = tokio::task::JoinSet::new();
+        
+        for _ in 0..n {
+            let taskflow = factory();
+            let handle_clone = self.handle.clone();
+            
+            handles.spawn(async move {
+                let executor = AsyncExecutor { handle: handle_clone };
+                executor.run_async(&taskflow).await;
+            });
+        }
+        
+        // Wait for all instances to complete
+        while handles.join_next().await.is_some() {}
+    }
+    
+    /// Run a taskflow repeatedly until a condition is met (async version)
+    /// 
+    /// Executes the taskflow repeatedly, checking the predicate after each execution.
+    /// Stops when the predicate returns true.
+    /// 
+    /// # Example
+    /// ```
+    /// use taskflow_rs::{AsyncExecutor, Taskflow};
+    /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    /// 
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let executor = AsyncExecutor::new(4);
+    ///     let counter = Arc::new(AtomicUsize::new(0));
+    ///     
+    ///     let c = counter.clone();
+    ///     executor.run_until_async(
+    ///         || {
+    ///             let c2 = c.clone();
+    ///             let mut taskflow = Taskflow::new();
+    ///             taskflow.emplace_async(move || async move {
+    ///                 c2.fetch_add(1, Ordering::Relaxed);
+    ///             });
+    ///             taskflow
+    ///         },
+    ///         || counter.load(Ordering::Relaxed) >= 5
+    ///     ).await;
+    ///     
+    ///     assert_eq!(counter.load(Ordering::Relaxed), 5);
+    /// }
+    /// ```
+    #[cfg(feature = "async")]
+    pub async fn run_until_async<F, P>(&self, factory: F, mut predicate: P)
+    where
+        F: Fn() -> Taskflow,
+        P: FnMut() -> bool,
+    {
+        loop {
+            let taskflow = factory();
+            self.run_async(&taskflow).await;
+            
+            if predicate() {
+                break;
+            }
+        }
+    }
+    
+    /// Run a taskflow N times sequentially (async version)
+    /// 
+    /// Executes the taskflow N times, one after another.
+    /// 
+    /// # Example
+    /// ```
+    /// let executor = AsyncExecutor::new(4);
+    /// executor.run_n_sequential_async(3, || {
+    ///     let mut taskflow = Taskflow::new();
+    ///     taskflow.emplace_async(|| async {
+    ///         println!("Task");
+    ///     });
+    ///     taskflow
+    /// }).await;
+    /// ```
+    #[cfg(feature = "async")]
+    pub async fn run_n_sequential_async<F>(&self, n: usize, factory: F)
+    where
+        F: Fn() -> Taskflow,
+    {
+        for _ in 0..n {
+            let taskflow = factory();
+            self.run_async(&taskflow).await;
+        }
+    }
+    
     /// Count all tasks reachable from a set of starting tasks
     fn count_reachable_tasks(graph: &Arc<Mutex<Vec<TaskNode>>>, start_tasks: &[TaskId]) -> usize {
         let graph_guard = graph.lock().unwrap();

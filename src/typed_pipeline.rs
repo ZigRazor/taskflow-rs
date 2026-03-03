@@ -127,7 +127,7 @@ where
     }
     
     /// Build the pipeline and integrate with a Taskflow
-    pub fn build_taskflow(&self, taskflow: &mut Taskflow, input: Arc<Mutex<Option<In>>>) -> TaskHandle
+    pub fn build_taskflow(&self, taskflow: &mut Taskflow, _input: Arc<Mutex<Option<In>>>) -> TaskHandle
     where
         In: Clone,
         Out: Clone,
