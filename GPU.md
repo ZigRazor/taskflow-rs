@@ -1,479 +1,298 @@
-# GPU Support
+# GPU Support (v2)
 
-TaskFlow-RS provides CUDA integration for heterogeneous computing, allowing GPU tasks to be seamlessly integrated into task graphs alongside CPU tasks.
+TaskFlow-RS provides a **backend-agnostic GPU API** with support for CUDA, OpenCL, and ROCm/HIP.  All three share the same user-facing types (`GpuDevice`, `GpuBuffer`, `GpuStream`) — switching backends requires changing only one line.
 
-## Features
+---
 
-- **CUDA Integration** - Native CUDA support via cudarc
-- **Data Transfer Management** - Efficient host-device memory operations
-- **GPU-CPU Synchronization** - Proper task ordering and synchronization
-- **Heterogeneous Workflows** - Mix CPU and GPU tasks in the same DAG
-- **Memory Management** - Automatic GPU memory handling
+## Feature Matrix
 
-## Prerequisites
+| Feature | CUDA | OpenCL | ROCm/HIP | Stub |
+|---------|:----:|:------:|:--------:|:----:|
+| Buffer alloc/free | ✅ | ✅ | ✅ | ✅ |
+| Sync H2D / D2H | ✅ | ✅ | ✅ | ✅ |
+| **Async H2D / D2H** | ✅ | ✅ | ✅ | ✅ |
+| **Multiple streams** | ✅ | ✅ | ✅ | ✅ |
+| **StreamPool** | ✅ | ✅ | ✅ | ✅ |
+| **Double-buffer pipeline** | ✅ | ✅ | ✅ | ✅ |
+| Kernel launch | ✅ | Planned | Planned | — |
+| Unified memory | Planned | — | — | — |
+| Memory info query | ✅ | ✅ | ✅ | ✅ |
 
-### Hardware
-- NVIDIA GPU with CUDA Compute Capability 5.2 or higher
-- Minimum 2GB GPU memory recommended
+---
 
-### Software
-1. **CUDA Toolkit** (11.0 or higher)
-   ```bash
-   # Ubuntu/Debian
-   sudo apt install nvidia-cuda-toolkit
-   
-   # Check installation and version
-   nvcc --version
-   ```
+## Building
 
-2. **NVIDIA Drivers**
-   ```bash
-   # Check driver version
-   nvidia-smi
-   ```
-
-3. **Rust with GPU feature**
-   
-   **Important**: Check your CUDA version first, then configure if needed.
-   
-   ```bash
-   # Check your CUDA version
-   nvcc --version
-   # Look for "release X.Y" in the output
-   ```
-   
-   **If you have CUDA 12.0** (default):
-   ```bash
-   cargo build --features gpu
-   ```
-   
-   **If you have a different CUDA version** (e.g., 11.8 or 12.5):
-   1. Edit `Cargo.toml`
-   2. In the `[features]` section, find the line starting with `gpu =`
-   3. Change `cudarc/cuda-12000` to match your version
-   4. Example for CUDA 11.8: `gpu = ["cudarc", "cudarc/cuda-11080"]`
-   5. Then build: `cargo build --features gpu`
-   
-   See `GPU_SETUP.md` for detailed version configuration instructions.
-
-### Optional: Building Without GPU
-
-If you don't have CUDA installed, simply don't use the `--features gpu` flag:
+### CUDA (NVIDIA)
 
 ```bash
-# Build without GPU support
-cargo build
+# Default: CUDA 12.0
+cargo build --features gpu
 
-# Examples will gracefully handle missing GPU
-cargo run --example gpu_tasks
-# Output: "✗ Failed to initialize CUDA device: ..."
+# Different CUDA version (edit Cargo.toml gpu feature line):
+# gpu = ["cudarc", "cudarc/cuda-11080"]  → CUDA 11.8
+# gpu = ["cudarc", "cudarc/cuda-12050"]  → CUDA 12.5
 ```
 
-## Basic Usage
+### OpenCL (NVIDIA / AMD / Intel / Apple)
 
-### Initialize GPU Device
-
-```rust
-use taskflow_rs::GpuDevice;
-
-// Initialize first GPU (device 0)
-let device = GpuDevice::new(0)
-    .expect("Failed to initialize CUDA device");
-
-// Synchronize device
-device.synchronize()
-    .expect("Synchronization failed");
+```bash
+# Requires an OpenCL ICD loader and at least one OpenCL driver
+# Ubuntu: sudo apt install ocl-icd-opencl-dev opencl-headers
+# Fedora: sudo dnf install ocl-icd-devel  opencl-headers
+cargo build --features opencl
 ```
 
-### GPU Buffers
+### ROCm / HIP (AMD)
 
-```rust
-use taskflow_rs::{GpuDevice, GpuBuffer};
-
-let device = GpuDevice::new(0).unwrap();
-
-// Allocate buffer on GPU
-let mut gpu_buffer: GpuBuffer<f32> = GpuBuffer::allocate(&device, 1024)
-    .expect("Allocation failed");
-
-// Host data
-let host_data: Vec<f32> = (0..1024).map(|i| i as f32).collect();
-
-// Copy host → device
-gpu_buffer.copy_from_host(&host_data)
-    .expect("H2D copy failed");
-
-// Copy device → host
-let mut results = vec![0.0f32; 1024];
-gpu_buffer.copy_to_host(&mut results)
-    .expect("D2H copy failed");
+```bash
+# Requires ROCm ≥ 5.0: https://rocm.docs.amd.com
+export ROCM_PATH=/opt/rocm
+cargo build --features rocm
 ```
 
-### GPU-CPU Pipeline
+### All backends
 
-```rust
-use taskflow_rs::{Executor, Taskflow, GpuDevice, GpuBuffer};
-use std::sync::Arc;
-
-let mut executor = Executor::new(4);
-let mut taskflow = Taskflow::new();
-let device = GpuDevice::new(0).unwrap();
-
-let data = Arc::new(std::sync::Mutex::new(Vec::new()));
-
-// CPU task: Generate data
-let d1 = data.clone();
-let generate = taskflow.emplace(move || {
-    let mut data = d1.lock().unwrap();
-    *data = (0..1024).map(|i| i as f32).collect();
-});
-
-// GPU task: Process on device
-let d2 = data.clone();
-let dev = device.clone();
-let process_gpu = taskflow.emplace(move || {
-    let data = d2.lock().unwrap();
-    
-    // Allocate and transfer
-    let mut input = GpuBuffer::allocate(&dev, data.len()).unwrap();
-    input.copy_from_host(&data).unwrap();
-    
-    // Run computation (kernel launch would go here)
-    dev.synchronize().unwrap();
-    
-    // Transfer back
-    let mut output = vec![0.0f32; data.len()];
-    input.copy_to_host(&mut output).unwrap();
-});
-
-// CPU task: Validate
-let d3 = data.clone();
-let validate = taskflow.emplace(move || {
-    let data = d3.lock().unwrap();
-    println!("Validated {} elements", data.len());
-});
-
-// Build pipeline
-generate.precede(&process_gpu);
-process_gpu.precede(&validate);
-
-executor.run(&taskflow).wait();
+```bash
+cargo build --features all-gpu
 ```
 
-## Advanced Patterns
+### No GPU (Stub — for CI / dev machines)
 
-### Pattern 1: Heterogeneous Workflow
-
-Mix CPU and GPU tasks in a complex DAG:
-
-```rust
-let mut taskflow = Taskflow::new();
-let device = GpuDevice::new(0).unwrap();
-
-// CPU preprocessing
-let preprocess = taskflow.emplace(|| {
-    println!("CPU preprocessing");
-});
-
-// Parallel GPU computations
-let dev1 = device.clone();
-let gpu_task_1 = taskflow.emplace(move || {
-    println!("GPU computation 1");
-    dev1.synchronize().ok();
-});
-
-let dev2 = device.clone();
-let gpu_task_2 = taskflow.emplace(move || {
-    println!("GPU computation 2");
-    dev2.synchronize().ok();
-});
-
-// CPU postprocessing
-let postprocess = taskflow.emplace(|| {
-    println!("CPU postprocessing");
-});
-
-// Build DAG: preprocess → [gpu1, gpu2] → postprocess
-preprocess.precede(&gpu_task_1);
-preprocess.precede(&gpu_task_2);
-gpu_task_1.precede(&postprocess);
-gpu_task_2.precede(&postprocess);
+```bash
+cargo build   # stub backend is always available, no extra flags
 ```
 
-### Pattern 2: GPU Data Pipeline
+---
 
-Process streaming data through GPU:
+## Core Concepts
+
+### GpuDevice
+
+Backend-agnostic device handle.  Auto-selects the best available backend:
 
 ```rust
-use taskflow_rs::GpuTaskConfig;
+// Auto-select: CUDA → ROCm → OpenCL → Stub
+let device = GpuDevice::new(0)?;
 
-let device = GpuDevice::new(0).unwrap();
+// Force a specific backend
+let device = GpuDevice::with_backend(0, BackendKind::OpenCL)?;
+let device = GpuDevice::with_backend(0, BackendKind::Rocm)?;
+let device = GpuDevice::with_backend(0, BackendKind::Stub)?;
 
-for batch in data_batches {
-    let mut taskflow = Taskflow::new();
-    let dev = device.clone();
-    
-    let process = taskflow.emplace(move || {
-        // Configure kernel launch
-        let config = GpuTaskConfig::linear(batch.len(), 256);
-        
-        // Allocate buffers
-        let mut input = GpuBuffer::allocate(&dev, batch.len()).unwrap();
-        let mut output = GpuBuffer::allocate(&dev, batch.len()).unwrap();
-        
-        // Transfer and compute
-        input.copy_from_host(&batch).unwrap();
-        // Launch kernel here
-        dev.synchronize().unwrap();
-        
-        // Transfer results
-        let mut results = vec![0.0; batch.len()];
-        output.copy_to_host(&mut results).unwrap();
-    });
-    
-    executor.run(&taskflow).wait();
+println!("{} ({:?})", device.name(), device.backend_kind());
+let (free, total) = device.memory_info()?;
+```
+
+### GpuBuffer\<T\>
+
+Typed device buffer.  Sync and async transfers:
+
+```rust
+let mut buf: GpuBuffer<f32> = GpuBuffer::allocate(&device, 1024)?;
+
+// ── Synchronous (blocking) ───────────────────────────────────────────────
+let src = vec![1.0f32; 1024];
+buf.copy_from_host(&src)?;
+
+let mut dst = vec![0.0f32; 1024];
+buf.copy_to_host(&mut dst)?;
+
+// ── Asynchronous (enqueued on a stream) ───────────────────────────────────
+let stream = device.create_stream("my-stream")?;
+
+unsafe {
+    // Returns immediately; copy executes when stream is scheduled
+    buf.copy_from_host_async(&src, &stream)?;
+    buf.copy_to_host_async(&mut dst, &stream)?;
 }
+
+// Wait for the stream's work to complete
+stream.synchronize()?;
 ```
 
-### Pattern 3: Multi-GPU
+---
 
-Use multiple GPUs in parallel:
+## Multiple CUDA Streams
+
+### StreamPool — managed pool with automatic assignment
 
 ```rust
-let device_0 = GpuDevice::new(0).unwrap();
-let device_1 = GpuDevice::new(1).unwrap();
+// Round-robin pool of 4 streams
+let pool = device.stream_pool(4)?;
 
-let mut taskflow = Taskflow::new();
+// Least-loaded pool (picks stream with fewest pending ops)
+let pool = device.stream_pool_with(4, StreamAssignment::LeastPending)?;
 
-// Task on GPU 0
-let dev0 = device_0.clone();
-let task_gpu0 = taskflow.emplace(move || {
-    println!("Running on GPU 0");
-    // Compute on device 0
-    dev0.synchronize().ok();
-});
+// Acquire a stream from the pool (RAII guard)
+{
+    let guard = pool.acquire()?;
+    let stream = guard.stream();
 
-// Task on GPU 1
-let dev1 = device_1.clone();
-let task_gpu1 = taskflow.emplace(move || {
-    println!("Running on GPU 1");
-    // Compute on device 1
-    dev1.synchronize().ok();
-});
+    unsafe { buf.copy_from_host_async(&data, stream)?; }
 
-// Run both in parallel
-executor.run(&taskflow).wait();
+    // Guard dropped here — decrements pending-op counter
+}
+
+// Barrier: wait for all streams in the pool
+pool.synchronize_all()?;
 ```
 
-## Launch Configuration
-
-Configure kernel launches with `GpuTaskConfig`:
+### StreamSet — fixed-depth pipeline
 
 ```rust
-use taskflow_rs::GpuTaskConfig;
+// 3-deep pipeline: streams 0, 1, 2 cycle round-robin
+let set = device.stream_set(3, "compute")?;
 
-// 1D configuration (common for vector operations)
-let config = GpuTaskConfig::linear(
-    1024,  // number of elements
-    256    // threads per block
-);
-// Result: 4 blocks × 256 threads = 1024 threads
-
-// 2D configuration (common for image processing)
-let config = GpuTaskConfig::grid_2d(
-    1920,        // width
-    1080,        // height
-    (16, 16)     // block size
-);
-// Result: 120×68 blocks × 16×16 threads
-
-// Custom configuration
-let config = GpuTaskConfig {
-    grid_dim: (100, 1, 1),
-    block_dim: (256, 1, 1),
-    shared_mem_bytes: 4096,
-};
-```
-
-## Data Transfer Optimization
-
-### Pinned Memory
-
-For faster transfers, use pinned (page-locked) memory:
-
-```rust
-// TODO: Implement pinned memory support
-// For now, use standard allocations
-let host_data = vec![0.0f32; size];
-```
-
-### Asynchronous Transfers
-
-Overlap computation with data transfer:
-
-```rust
-// TODO: Implement async transfer support
-// Currently all transfers are synchronous
-```
-
-### Minimize Transfers
-
-Keep data on GPU when possible:
-
-```rust
-// Bad: Transfer back and forth
-gpu_buffer.copy_to_host(&mut temp).unwrap();
-// Do CPU work
-gpu_buffer.copy_from_host(&temp).unwrap();
-
-// Good: Keep on GPU, chain GPU operations
-// Computation 1 → Computation 2 → ... → Final transfer
-```
-
-## Error Handling
-
-All GPU operations return `Result` for proper error handling:
-
-```rust
-use taskflow_rs::{GpuDevice, GpuBuffer};
-
-match GpuDevice::new(0) {
-    Ok(device) => {
-        match GpuBuffer::<f32>::allocate(&device, 1024) {
-            Ok(buffer) => {
-                // Use buffer
-            }
-            Err(e) => eprintln!("Allocation failed: {}", e),
-        }
+for (i, batch) in batches.iter().enumerate() {
+    // Sync the slot before reusing it
+    if i >= 3 {
+        set.get(i).synchronize()?;  // waits for stream i%3
     }
-    Err(e) => eprintln!("Device init failed: {}", e),
+
+    let stream = set.get(i);       // i % 3
+    unsafe { buf.copy_from_host_async(batch, stream)?; }
+    // launch_kernel(&buf, stream)?;
 }
+set.synchronize_all()?;
 ```
 
-## Performance Considerations
-
-### Transfer Overhead
-
-- **H2D (Host-to-Device)**: ~10 GB/s typical
-- **D2H (Device-to-Host)**: ~10 GB/s typical
-- **Compute**: 100x-1000x faster than CPU for parallel workloads
-
-### When to Use GPU
-
-✅ **Good for GPU:**
-- Large data parallel operations
-- Matrix operations (GEMM)
-- Image/signal processing
-- Monte Carlo simulations
-
-❌ **Not ideal for GPU:**
-- Small datasets (< 10K elements)
-- Sequential algorithms
-- Frequent small transfers
-- Complex branching logic
-
-### Optimization Tips
-
-1. **Batch Operations**: Process multiple items per kernel launch
-2. **Minimize Transfers**: Keep data on GPU between operations
-3. **Use Async**: Overlap CPU and GPU work
-4. **Coalesce Memory**: Access memory in coalesced patterns
-5. **Occupancy**: Tune block/grid size for your GPU
-
-## Debugging
-
-### Check GPU Status
-
-```bash
-# Monitor GPU usage
-nvidia-smi
-
-# Watch continuously
-watch -n 1 nvidia-smi
-```
-
-### Common Issues
-
-**Issue**: "Must specify one of the following features: [cuda-version-from-build-system, cuda-12050, ...]"
-- **Cause**: cudarc requires explicit CUDA version
-- **Solution**: The default is CUDA 12.0. If you have a different version:
-  1. Check your version: `nvcc --version`
-  2. Edit `Cargo.toml` in the `[features]` section (around line 22)
-  3. Find: `gpu = ["cudarc", "cudarc/cuda-12000"]`
-  4. Change to match your version, e.g.: `gpu = ["cudarc", "cudarc/cuda-11080"]` for CUDA 11.8
-  5. See GPU_SETUP.md for complete list of versions
-
-**Issue**: "CUDA device not found"
-- Check: `nvidia-smi` shows GPU
-- Install: NVIDIA drivers
-- Verify: CUDA toolkit installed
-
-**Issue**: "Out of memory"
-- Reduce batch size
-- Free unused buffers
-- Use smaller data types (f16 vs f32)
-
-**Issue**: "Kernel launch failed"
-- Check launch configuration
-- Verify grid/block dimensions
-- Check shared memory size
-
-## Examples
-
-### Run GPU Examples
-
-```bash
-# Build with GPU support
-cargo build --features gpu --release
-
-# Run GPU tasks example
-cargo run --features gpu --example gpu_tasks
-
-# Run without GPU (falls back gracefully)
-cargo run --example gpu_tasks
-```
-
-### Example: Vector Addition
+### Manual stream creation
 
 ```rust
-use taskflow_rs::{Executor, Taskflow, GpuDevice, GpuBuffer};
+let s0 = device.create_stream("h2d-0")?;
+let s1 = device.create_stream("compute-0")?;
+let s2 = device.create_stream("d2h-0")?;
 
-fn vector_add_gpu() {
-    let mut executor = Executor::new(4);
-    let mut taskflow = Taskflow::new();
-    let device = GpuDevice::new(0).unwrap();
-    
-    let size = 1_000_000;
-    
-    // Generate input vectors
-    let a: Vec<f32> = (0..size).map(|i| i as f32).collect();
-    let b: Vec<f32> = (0..size).map(|i| (i * 2) as f32).collect();
-    
-    let dev = device.clone();
-    let compute = taskflow.emplace(move || {
-        // Allocate GPU memory
-        let mut d_a = GpuBuffer::allocate(&dev, size).unwrap();
-        let mut d_b = GpuBuffer::allocate(&dev, size).unwrap();
-        let mut d_c = GpuBuffer::allocate(&dev, size).unwrap();
-        
-        // Transfer to GPU
-        d_a.copy_from_host(&a).unwrap();
-        d_b.copy_from_host(&b).unwrap();
-        
-        // Launch kernel (would use actual kernel here)
-        // For now, simulate with synchronize
-        dev.synchronize().unwrap();
-        
-        // Transfer result back
-        let mut c = vec![0.0f32; size];
-        d_c.copy_to_host(&mut c).unwrap();
-        
-        println!("Computed {} elements on GPU", size);
-    });
-    
-    executor.run(&taskflow).wait();
+unsafe {
+    buf_a.copy_from_host_async(&input_a, &s0)?;
+    buf_b.copy_from_host_async(&input_b, &s0)?;  // s0: serial H2D
+    // kernel on s1 (overlaps with H2D on s0)
+    buf_out.copy_to_host_async(&mut result, &s2)?;
 }
+
+s0.synchronize()?;
+s1.synchronize()?;
+s2.synchronize()?;
 ```
+
+---
+
+## Async Transfers (Rust async/await)
+
+For ergonomic integration with Tokio task graphs:
+
+```rust
+// Takes ownership of the Vec to guarantee lifetime safety
+let (buf, data) = buf.copy_from_host_async_owned(data).await?;
+let (buf, result) = buf.copy_to_host_async_owned(result).await?;
+```
+
+This uses `tokio::task::spawn_blocking` internally so the async runtime is
+never blocked by GPU operations.
+
+---
+
+## OpenCL / ROCm Backends
+
+The same user-facing code works across all backends:
+
+```rust
+// CUDA
+let device = GpuDevice::with_backend(0, BackendKind::Cuda)?;
+
+// OpenCL — same code, different backend
+let device = GpuDevice::with_backend(0, BackendKind::OpenCL)?;
+
+// ROCm — same code, different backend
+let device = GpuDevice::with_backend(0, BackendKind::Rocm)?;
+
+// Everything below is identical regardless of backend
+let pool = device.stream_pool(4)?;
+let mut buf: GpuBuffer<f32> = GpuBuffer::allocate(&device, N)?;
+buf.copy_from_host(&data)?;
+```
+
+### OpenCL notes
+
+- Each "stream" is an independent `CommandQueue`.
+- `htod_async` / `dtoh_async` use `CL_FALSE` (non-blocking enqueue).
+- `stream.synchronize()` calls `clFinish()`.
+- Works with NVIDIA CUDA driver (OpenCL 3.0), AMD ROCm, Intel oneAPI.
+
+### ROCm/HIP notes
+
+- The HIP API mirrors CUDA; streams map 1-to-1 to `hipStream_t`.
+- Async transfers use `hipMemcpyAsync`.
+- Set `ROCM_PATH=/opt/rocm` before building.
+- Set `LD_LIBRARY_PATH=$ROCM_PATH/lib` before running.
+
+---
+
+## Multi-Stream in a TaskFlow DAG
+
+```rust
+let device = Arc::new(GpuDevice::new(0)?);
+let pool   = Arc::new(device.stream_pool(4)?);
+
+let mut taskflow = Taskflow::new();
+
+// Each GPU task pulls a stream from the shared pool
+let tasks: Vec<_> = (0..4).map(|i| {
+    let pool_ref   = Arc::clone(&pool);
+    let device_ref = Arc::clone(&device);
+
+    taskflow.emplace(move || {
+        let guard  = pool_ref.acquire().unwrap();
+        let stream = guard.stream();
+
+        let mut buf = GpuBuffer::<f32>::allocate(&device_ref, 1024).unwrap();
+        unsafe {
+            buf.copy_from_host_async(&input[i], stream).unwrap();
+        }
+        stream.synchronize().unwrap();
+    })
+}).collect();
+
+// Wire up DAG as needed ...
+executor.run(&taskflow).wait();
+
+// Final barrier across all streams
+pool.synchronize_all()?;
+```
+
+---
+
+## Double-Buffer Pipeline Pattern
+
+Overlap CPU data preparation with GPU computation:
+
+```
+Time →
+
+CPU:  [fill A] [fill B] [fill A] [fill B] ...
+GPU:            [A h2d]  [B h2d]  [A h2d]  ...
+                         [A d2h]  [B d2h]  ...
+```
+
+```rust
+let set = device.stream_set(2, "pipe")?;
+
+for (i, batch) in batches.enumerate() {
+    let slot   = i % 2;
+    let stream = set.get(i);
+
+    // Sync slot before reusing (waits for previous use of this slot)
+    if i >= 2 { stream.synchronize()?; }
+
+    unsafe {
+        dev_bufs[slot].copy_from_host_async(batch, stream)?;
+        dev_bufs[slot].copy_to_host_async(&mut results[slot], stream)?;
+    }
+}
+set.synchronize_all()?;
+```
+
+---
 
 ## API Reference
 
@@ -481,47 +300,75 @@ fn vector_add_gpu() {
 
 ```rust
 impl GpuDevice {
-    pub fn new(device_id: usize) -> Result<Self, String>;
-    pub fn device(&self) -> &Arc<CudaDevice>;
-    pub fn synchronize(&self) -> Result<(), String>;
+    pub fn new(device_id: usize) -> Result<Self, GpuError>;
+    pub fn with_backend(device_id: usize, kind: BackendKind) -> Result<Self, GpuError>;
+    pub fn backend_kind(&self) -> BackendKind;
+    pub fn name(&self) -> &str;
+    pub fn synchronize(&self) -> Result<(), GpuError>;
+    pub fn memory_info(&self) -> Result<(usize, usize), GpuError>;
+    pub fn create_stream(&self, label: impl Into<String>) -> Result<GpuStream, GpuError>;
+    pub fn stream_pool(&self, count: usize) -> Result<StreamPool, GpuError>;
+    pub fn stream_pool_with(&self, count: usize, strategy: StreamAssignment) -> Result<StreamPool, GpuError>;
+    pub fn stream_set(&self, depth: usize, label: &str) -> Result<StreamSet, GpuError>;
 }
 ```
 
-### GpuBuffer
+### GpuBuffer\<T\>
 
 ```rust
-impl<T: DeviceRepr> GpuBuffer<T> {
-    pub fn allocate(device: &GpuDevice, size: usize) -> Result<Self, String>;
-    pub fn copy_from_host(&mut self, host_data: &[T]) -> Result<(), String>;
-    pub fn copy_to_host(&self, host_data: &mut [T]) -> Result<(), String>;
-    pub fn device_slice(&self) -> &CudaSlice<T>;
-    pub fn device_slice_mut(&mut self) -> &mut CudaSlice<T>;
+impl<T: Copy> GpuBuffer<T> {
+    pub fn allocate(device: &GpuDevice, len: usize) -> Result<Self, GpuError>;
+    pub fn len(&self) -> usize;
+    pub fn size_bytes(&self) -> usize;
+    // Sync transfers
+    pub fn copy_from_host(&mut self, src: &[T]) -> Result<(), GpuError>;
+    pub fn copy_to_host(&self, dst: &mut [T]) -> Result<(), GpuError>;
+    // Async transfers (unsafe: caller guarantees slice lifetime)
+    pub unsafe fn copy_from_host_async(&mut self, src: &[T], stream: &GpuStream) -> Result<(), GpuError>;
+    pub unsafe fn copy_to_host_async(&self, dst: &mut [T], stream: &GpuStream) -> Result<(), GpuError>;
+    // Tokio async (safe: takes ownership)
+    pub async fn copy_from_host_async_owned(self, src: Vec<T>) -> Result<(Self, Vec<T>), GpuError>;
+    pub async fn copy_to_host_async_owned(self, dst: Vec<T>) -> Result<(Self, Vec<T>), GpuError>;
 }
 ```
 
-### GpuTaskConfig
+### StreamPool
 
 ```rust
-impl GpuTaskConfig {
-    pub fn linear(num_elements: usize, threads_per_block: u32) -> Self;
-    pub fn grid_2d(width: u32, height: u32, block_size: (u32, u32)) -> Self;
-    pub fn to_launch_config(&self) -> LaunchConfig;
+impl StreamPool {
+    pub fn new(backend: &Arc<dyn ComputeBackend>, count: usize, strategy: StreamAssignment) -> Result<Self, GpuError>;
+    pub fn acquire(&self) -> Result<StreamGuard<'_>, GpuError>;
+    pub fn synchronize_all(&self) -> Result<(), GpuError>;
+    pub fn len(&self) -> usize;
+    pub fn iter(&self) -> impl Iterator<Item = &GpuStream>;
 }
 ```
 
-## Limitations
+### GpuStream
 
-1. **CUDA Only**: Currently only NVIDIA CUDA is supported (no OpenCL, ROCm, Metal)
-2. **Synchronous Transfers**: All transfers are currently blocking
-3. **No Unified Memory**: Must manually manage host/device memory
-4. **Single Stream**: All operations use default CUDA stream
+```rust
+impl GpuStream {
+    pub fn new(backend: &Arc<dyn ComputeBackend>, label: impl Into<String>) -> Result<Self, GpuError>;
+    pub fn id(&self) -> u64;
+    pub fn label(&self) -> &str;
+    pub fn synchronize(&self) -> Result<(), GpuError>;
+}
+```
 
-## Future Enhancements
+---
 
-- Asynchronous data transfers
-- Multiple CUDA streams
-- Unified memory support
-- OpenCL backend
-- ROCm (AMD) support
-- Automatic kernel generation
-- Performance profiling integration
+## Examples
+
+```bash
+# Run the async+multi-stream demo (stub backend — no GPU required)
+cargo run --example gpu_async_streams
+
+# With CUDA
+cargo run --features gpu --example gpu_async_streams
+
+# With OpenCL
+cargo run --features opencl --example gpu_async_streams
+
+# With ROCm
+ROCM_PATH=/opt/rocm cargo run --features rocm --example gpu_async_streams
+```

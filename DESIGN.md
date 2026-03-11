@@ -1,393 +1,186 @@
-# TaskFlow-RS Design Notes and TODO
+# TaskFlow-RS Design Document
 
 ## Architecture Overview
 
-### Current Implementation
+TaskFlow-RS is a task-parallel programming library built around directed acyclic graphs (DAGs) of closures. Each node in the graph is a task; edges encode happens-before relationships. An executor drives the graph to completion using a work-stealing thread pool.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                       Taskflow                           │
-│  - Task Graph (DAG)                                      │
-│  - Task Creation API                                     │
-│  - Graph Management                                      │
-└──────────────┬──────────────────────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────────────────┐
-│                       TaskNode                           │
-│  - Task ID                                               │
-│  - Work (Closure)                                        │
-│  - Dependencies                                          │
-│  - Successors                                            │
-└──────────────┬──────────────────────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────────────────┐
-│                       Executor                           │
-│  - Thread Pool                                           │
-│  - Work Stealing Queue                                   │
-│  - Dependency Resolution                                 │
-└─────────────────────────────────────────────────────────┘
-```
+## Implementation Status
 
-## TODO List
+### Core
 
-### High Priority
+- [x] **Task Graph** ✅ COMPLETED
+  - [x] DAG construction with `emplace` / `precede` / `succeed`
+  - [x] Cycle detection
+  - [x] Task naming and metadata
+  - [x] Subflows (nested task graphs)
+  - [x] Condition tasks (conditional branching)
+  - [x] Loop constructs
 
-- [x] **Work-Stealing Scheduler** ✅ COMPLETED
-  - [x] Lock-free per-worker queues using crossbeam
-  - [x] Efficient work stealing with random victim selection
-  - [x] LIFO execution for own tasks, FIFO for stealing
-  - [x] Atomic dependency tracking
+- [x] **Executor** ✅ COMPLETED
+  - [x] Work-stealing scheduler (crossbeam deque)
+  - [x] Per-worker lock-free queues
+  - [x] Configurable worker count (0 = auto)
+  - [x] `run`, `run_n`, `run_until`, `run_many` variants
+  - [x] Parallel `run_n` (N instances concurrently)
+  - [x] `wait_for_all` barrier
 
 - [x] **Parallel Algorithms** ✅ COMPLETED
-  - [x] parallel_for_each - parallel iteration
-  - [x] parallel_reduce - parallel reduction
-  - [x] parallel_transform - parallel map
-  - [x] parallel_sort - parallel merge sort
-  - [x] `parallel_scan` - parallel prefix sum (inclusive and exclusive)
-
-- [x] **Better Condition Support** ✅ COMPLETED
-  - [x] Multi-way branching (select successor based on condition)
-  - [x] Conditional handle with branch registration
-  - [x] Integration with conditional tasks in executor
-  - [x] Loop support (cycle detection and handling) ✅ COMPLETED
-    - [x] DFS-based cycle detection algorithm
-    - [x] Topological sort for valid execution order
-    - [x] Loop construct with iteration control
-    - [x] Strongly connected components analysis
-    - [x] Safety limits (max iterations)
-    - [ ] Runtime loop execution (requires executor integration)
-    - [ ] Dynamic graph modification
+  - [x] `parallel_for_each`
+  - [x] `parallel_reduce`
+  - [x] `parallel_transform`
+  - [x] `parallel_sort`
+  - [x] `parallel_inclusive_scan` / `parallel_exclusive_scan`
 
 ### Medium Priority
 
-- [x] **Async Task Support** ✅ COMPLETED
-  - [x] Async task work variant
-  - [x] AsyncExecutor with Tokio runtime
-  - [x] Mixed sync/async workflows
-  - [x] Async task dependencies
-  - [x] Parallel async execution ✅ COMPLETED
-    - [x] JoinSet-based parallel task spawning
-    - [x] Automatic dependency management
-    - [x] Mixed sync/async task support
-    - [x] Parallel execution of independent tasks
-    - [x] Concurrent I/O operations
-  - [x] Async subflows ✅ COMPLETED
-    - [x] Dynamic async task creation
-    - [x] Nested async execution
-    - [x] Subflow dependency tracking
+- [x] **Async Support** ✅ COMPLETED
+  - [x] `AsyncExecutor` with Tokio integration
+  - [x] `emplace_async` for `async fn` tasks
+  - [x] `run_n_async`, `run_n_sequential_async`, `run_until_async`
+  - [x] Shared state support with `Arc`/`Mutex`
 
-- [x] **Pipeline Support** ✅ COMPLETED
-  - [x] ConcurrentPipeline with token management
-  - [x] Backpressure handling with configurable buffers
-  - [x] Thread-safe producer-consumer pattern
-  - [x] Multi-stage pipeline support
-  - [x] Parallel and serial stage patterns
-  - [x] Type-safe pipeline builder ✅ COMPLETED
-    - [x] Compile-time type checking between stages
-    - [x] TypeSafePipeline for chained transformations
-    - [x] SimplePipeline for in-place mutations
-    - [x] Type inference for pipeline stages
-  - [x] Built-in metrics and monitoring ✅ COMPLETED
-    - [x] Comprehensive Metrics system
-    - [x] Task execution tracking
-    - [x] Worker utilization metrics
-    - [x] Performance monitoring (tasks/sec, duration)
-    - [x] Memory usage tracking
-    - [x] Task timing histogram
-    - [x] Success/failure rate tracking
+- [x] **Pipeline** ✅ COMPLETED
+  - [x] `ConcurrentPipeline` with token management
+  - [x] Serial and parallel stages
+  - [x] Backpressure / flow control
+  - [x] `TypeSafePipeline` with compile-time type checking
+  - [x] `SimplePipeline` for in-place mutations
 
 - [x] **Composition** ✅ COMPLETED
-  - [x] Compose taskflows from other taskflows
-  - [x] Reusable task graph components (Composition)
-  - [x] Entry/exit point interfaces (CompositionBuilder)
-  - [x] Sequential and parallel composition patterns
-  - [x] Work cloning for full composition ✅ COMPLETED
-    - [x] CloneableWork wrapper for Fn() closures
-    - [x] Arc-based work sharing
-    - [x] Proper task cloning across compositions
-  - [x] Parameterized compositions ✅ COMPLETED
-    - [x] CompositionParams with typed parameters
-    - [x] ParameterizedComposition factory pattern
-    - [x] Dynamic graph generation based on parameters
-    - [x] Parameter types: Int, Float, String, Bool
-    - [x] Default parameter support
+  - [x] `Composition` / `CompositionBuilder` with entry/exit points
+  - [x] `CloneableWork` for Arc-based task sharing
+  - [x] `ParameterizedComposition` factory pattern
+  - [x] `CompositionParams` with typed parameters (Int, Float, String, Bool)
 
 - [x] **Run Variants** ✅ COMPLETED
-  - [x] `run_n(taskflow, n)` - run N times sequentially
-  - [x] `run_until(taskflow, predicate)` - run until condition
-  - [x] `run_many(taskflows)` - multiple concurrent taskflows
-  - [x] `run_many_and_wait(taskflows)` - convenience method
-  - [x] Parallel run_n (run N instances concurrently) ✅ COMPLETED
-    - [x] Thread-based parallel execution
-    - [x] run_n for concurrent instances
-    - [x] run_n_sequential for sequential instances
-    - [x] Shared state support with Arc/Mutex
-  - [x] Async variants (run_n_async, run_until_async) ✅ COMPLETED
-    - [x] run_n_async for parallel async instances
-    - [x] run_n_sequential_async for sequential async instances
-    - [x] run_until_async for conditional async execution
-    - [x] Full tokio integration
+  - [x] `run_n` — N sequential instances
+  - [x] `run_until` — run until predicate
+  - [x] `run_many` / `run_many_and_wait` — concurrent taskflows
+  - [x] Thread-based parallel `run_n`
+
+- [x] **Built-in Metrics** ✅ COMPLETED
+  - [x] `Metrics` system with task execution tracking
+  - [x] Worker utilization, tasks/sec, timing histogram
+  - [x] Memory usage and success/failure rates
 
 ### Low Priority
 
 - [x] **GPU Support** ✅ COMPLETED
   - [x] CUDA device integration via cudarc
-  - [x] GPU buffer management (GpuBuffer)
-  - [x] Host-device data transfers
-  - [x] GPU-CPU synchronization
-  - [x] Launch configuration (GpuTaskConfig)
-  - [x] Heterogeneous task graphs
-  - [ ] Asynchronous transfers (planned)
-  - [ ] Multiple CUDA streams (planned)
-  - [ ] OpenCL/ROCm backends (planned)
+  - [x] `GpuBuffer<T>` typed device buffer management
+  - [x] Synchronous host↔device transfers (`copy_from_host` / `copy_to_host`)
+  - [x] `GpuTaskConfig` launch dimensions (1D and 2D)
+  - [x] Heterogeneous task graphs (CPU + GPU tasks in same DAG)
+  - [x] **Asynchronous transfers** ✅ COMPLETED
+    - [x] `copy_from_host_async` / `copy_to_host_async` (unsafe, stream-scoped)
+    - [x] `copy_from_host_async_owned` / `copy_to_host_async_owned` (safe, Tokio)
+    - [x] `AsyncTransferBuilder` fluent pipeline API
+  - [x] **Multiple CUDA streams** ✅ COMPLETED
+    - [x] `GpuStream` — named per-device command queue
+    - [x] `StreamPool` — N-stream pool with round-robin and least-pending strategies
+    - [x] `StreamGuard` — RAII borrow with automatic pending-op accounting
+    - [x] `StreamSet` — fixed-depth stream set for double-buffer pipelines
+    - [x] `GpuDevice::stream_pool` / `stream_set` / `create_stream` factory methods
+  - [x] **OpenCL/ROCm backends** ✅ COMPLETED
+    - [x] `ComputeBackend` trait — pluggable backend abstraction
+    - [x] `BackendKind` enum — CUDA / OpenCL / ROCm / Stub
+    - [x] `probe_backend` — auto-selects best available backend at runtime
+    - [x] CUDA backend (`gpu_cuda_backend.rs`) — wraps cudarc 0.11
+    - [x] OpenCL backend (`gpu_opencl.rs`) — wraps opencl3 0.9, works on NVIDIA/AMD/Intel
+    - [x] ROCm/HIP backend (`gpu_rocm.rs`) — raw HIP FFI via `libamdhip64`
+    - [x] Stub backend — always available, used in CI / no-GPU environments
+    - [x] `GpuDevice::with_backend(id, BackendKind)` explicit backend selection
+  - [ ] Unified / pinned memory (planned)
+  - [ ] Automatic kernel generation (planned)
 
 - [x] **Advanced Features** ✅ COMPLETED
-  - [x] Task priorities (Priority enum with Low/Normal/High/Critical)
-  - [x] Task cancellation (CancellationToken with cooperative cancellation)
-  - [x] Custom schedulers (Scheduler trait with FIFO, Priority, RoundRobin implementations)
-  - [x] NUMA-aware scheduling (Topology detection, worker pinning strategies)
+  - [x] Task priorities (`Priority` enum: Low / Normal / High / Critical)
+  - [x] Cooperative task cancellation (`CancellationToken`)
+  - [x] Custom scheduler trait (`FifoScheduler`, `PriorityScheduler`, `RoundRobinScheduler`)
+  - [x] NUMA topology detection and worker pinning
   - [ ] Preemptive cancellation (planned)
   - [ ] Dynamic priority adjustment (planned)
   - [ ] Hardware topology integration with hwloc (planned)
 
 - [x] **Tooling** ✅ COMPLETED
-  - [x] Profiler integration (ExecutionProfile with statistics)
-  - [x] Visualization tools (DOT graphs, SVG timelines, HTML reports)
-  - [x] Performance monitoring (Real-time metrics, worker utilization)
-  - [x] Debug mode with logging (Structured logging with levels)
+  - [x] `Profiler` with `ExecutionProfile` statistics
+  - [x] DOT graph export, SVG timeline, HTML report
+  - [x] Real-time `PerformanceMetrics` and worker utilization
+  - [x] `DebugLogger` with structured log levels
   - [ ] Real-time dashboard (planned)
   - [ ] Flamegraph generation (planned)
   - [ ] Automated regression detection (planned)
 
+---
+
 ## Design Decisions
 
-### Why Arc<Mutex<Vec<TaskNode>>>?
+### Pluggable GPU Backend (`ComputeBackend` trait)
 
-**Pros:**
-- Simple to implement
-- Thread-safe shared ownership
-- Works with Rust's ownership system
+The GPU layer is built around a single trait:
 
-**Cons:**
-- Performance overhead from mutex locks
-- Not lock-free
-- Potential contention with many workers
+```rust
+pub trait ComputeBackend: Send + Sync + fmt::Debug + 'static {
+    fn kind(&self) -> BackendKind;
+    fn alloc_bytes(&self, size: usize) -> Result<DeviceBuffer, GpuError>;
+    fn htod_sync(&self, src: *const c_void, bytes: usize, dst: &DeviceBuffer) -> Result<(), GpuError>;
+    fn dtoh_sync(&self, src: &DeviceBuffer, dst: *mut c_void, bytes: usize) -> Result<(), GpuError>;
+    unsafe fn htod_async(..., stream: &DeviceStream) -> Result<(), GpuError>;
+    unsafe fn dtoh_async(..., stream: &DeviceStream) -> Result<(), GpuError>;
+    fn create_stream(&self) -> Result<DeviceStream, GpuError>;
+    fn synchronize_device(&self) -> Result<(), GpuError>;
+    fn memory_info(&self) -> Result<(usize, usize), GpuError>;
+}
+```
 
-**Alternatives to Consider:**
-- Lock-free data structures (crossbeam)
-- Per-worker task queues
-- Immutable task graphs with runtime state
+**Why trait-object dispatch over generics?**
+- Backends are selected at **runtime** via `probe_backend()` (CUDA → ROCm → OpenCL → Stub)
+- The vtable cost is negligible compared to any real GPU operation
+- User code is backend-agnostic; switching hardware requires changing one line
+
+**Downcast pattern:** `BackendBuffer` and `BackendStream` both expose `fn as_any(&self) -> &dyn Any`, enabling safe concrete-type recovery inside each backend without exposing implementation details through the trait.
+
+### Async Transfers
+
+Two levels of async transfer are provided:
+
+1. **`unsafe` stream-scoped** (`copy_from_host_async`): enqueues work on a `GpuStream`, returns immediately. Caller must guarantee the host slice outlives `stream.synchronize()`. Used when lifetimes can be proven at the call site.
+
+2. **Safe owned** (`copy_from_host_async_owned`): takes ownership of the `Vec<T>`, runs the blocking copy on `tokio::task::spawn_blocking`, returns `(GpuBuffer, Vec<T>)`. No lifetime juggling. Used in Tokio async contexts.
+
+### StreamPool Assignment Strategies
+
+`StreamPool` supports two assignment policies selected at construction time:
+
+- **`RoundRobin`**: streams handed out in fixed rotation. Constant time, zero contention, good for uniform workloads.
+- **`LeastPending`**: streams tracked by `AtomicU64` pending-op counter; the pool hands out the least-loaded stream. Better for uneven batch sizes.
+
+`StreamGuard` decrements the counter on drop (RAII), keeping accounting automatic.
+
+### `Arc<Mutex<Vec<TaskNode>>>` for the Task Graph
+
+**Pros:** simple, thread-safe shared ownership, works with Rust ownership.  
+**Cons:** mutex contention under many workers.  
+**Alternatives:** lock-free structures (crossbeam), per-worker queues, immutable graphs with runtime state.  
+The current design prioritises correctness and maintainability over maximum throughput; the work-stealing executor already minimises graph contention in practice.
 
 ### Work Stealing vs Work Sharing
 
 **Implemented: Work stealing ✅**
 
-Each worker has its own lock-free deque:
-- Workers push/pop from their own queue (back)
-- Workers steal from others' queues (front)
-- Better cache locality
-- Less contention
-- Implemented using `crossbeam::deque`
+Each worker has its own lock-free deque (`crossbeam::deque`):
+- Workers push/pop from their own queue (LIFO — better cache locality)
+- Idle workers steal from the front of others' queues (FIFO)
+- Near-linear scalability on multi-core systems
 
-**Implementation:**
-```rust
-use crossbeam::deque::{Worker, Stealer};
+### Feature Flags
 
-struct Executor {
-    workers: Vec<Arc<Worker<TaskId>>>,
-    stealers: Vec<Stealer<TaskId>>,
-}
+| Flag | Enables |
+|------|---------|
+| `gpu` | CUDA backend via cudarc (NVIDIA) |
+| `opencl` | OpenCL backend via opencl3 (NVIDIA/AMD/Intel) |
+| `rocm` | ROCm/HIP backend via raw FFI (AMD) |
+| `all-gpu` | All three GPU backends simultaneously |
+| `async` | Tokio async executor and async task variants |
 
-// Each worker:
-// 1. Try pop from own queue (LIFO)
-// 2. If empty, try steal from others (FIFO)
-// 3. If no work, yield or shutdown
-```
-
-**Benefits achieved:**
-- ~7x speedup on 8 cores for parallel workloads
-- Minimal lock contention
-- Good cache locality
-
-### Dependency Tracking
-
-**Current Issue:** Dependencies tracked globally in each TaskNode
-
-**Better Approach:**
-- Runtime dependency counter separate from graph
-- Lock-free atomic counters
-- Per-execution state vs graph structure
-
-```rust
-struct TaskNode {
-    id: TaskId,
-    work: TaskWork,
-    successors: Vec<TaskId>,  // immutable after creation
-}
-
-struct ExecutionState {
-    ready_counts: HashMap<TaskId, AtomicUsize>,
-}
-```
-
-### Memory Management
-
-**Current:** Tasks own their closures with `Box<dyn FnOnce()>`
-
-**Considerations:**
-- One-time execution vs reusable tasks
-- Memory cleanup after execution
-- Support for multiple runs
-
-**Ideas:**
-- Separate graph structure from execution state
-- Clear execution state between runs
-- Option for reusable tasks with `FnMut`
-
-## Performance Optimizations
-
-### 1. Lock-Free Queues ✅ IMPLEMENTED
-
-Replaced `Mutex<VecDeque>` with crossbeam work-stealing deques:
-
-```rust
-use crossbeam::deque::{Worker, Stealer};
-
-// Each worker has its own lock-free deque
-let worker: Worker<TaskId> = Worker::new_fifo();
-let stealer: Stealer<TaskId> = worker.stealer();
-
-// Operations are lock-free
-worker.push(task_id);        // Lock-free push
-let task = worker.pop();     // Lock-free pop
-let task = stealer.steal();  // Lock-free steal
-```
-
-**Impact:** ~3-7x performance improvement on multi-core systems
-
-### 2. Atomic Dependency Counters ✅ IMPLEMENTED
-
-```rust
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-struct RuntimeState {
-    dep_counts: Vec<AtomicUsize>,
-}
-
-// Decrement and check if ready
-if dep_counts[task_id].fetch_sub(1, Ordering::AcqRel) == 1 {
-    // Task is ready
-}
-```
-
-### 3. Thread-Local Storage
-
-Reduce contention by keeping worker state thread-local:
-
-```rust
-thread_local! {
-    static WORKER_ID: Cell<usize> = Cell::new(0);
-    static LOCAL_QUEUE: RefCell<VecDeque<TaskId>> = RefCell::new(VecDeque::new());
-}
-```
-
-### 4. SIMD for Bulk Operations
-
-Use SIMD for processing multiple tasks:
-
-```rust
-// Check multiple ready states at once
-// Update multiple dependency counters
-```
-
-## API Improvements
-
-### Builder Pattern
-
-```rust
-let task = taskflow
-    .task()
-    .name("my_task")
-    .work(|| println!("Hello"))
-    .priority(10)
-    .build();
-```
-
-### Macro for Task Creation
-
-```rust
-taskflow! {
-    let a = task!(|| println!("A"));
-    let b = task!(|| println!("B"));
-    a >> b;  // a precedes b
-}
-```
-
-### Error Handling
-
-```rust
-pub enum TaskflowError {
-    CyclicDependency,
-    InvalidTaskId,
-    ExecutionFailed,
-}
-
-pub type Result<T> = std::result::Result<T, TaskflowError>;
-```
-
-## Testing Strategy
-
-### Unit Tests
-- Individual task execution
-- Dependency resolution
-- Graph construction
-
-### Integration Tests
-- Complex task graphs
-- Parallel execution
-- Edge cases
-
-### Performance Tests
-- Benchmark against C++ TaskFlow
-- Scalability tests
-- Memory usage profiling
-
-### Stress Tests
-- Large task graphs (millions of tasks)
-- High contention scenarios
-- Long-running workflows
-
-## Documentation Needs
-
-- [ ] API documentation (rustdoc)
-- [ ] Usage examples
-- [ ] Architecture guide
-- [ ] Performance guide
-- [ ] Migration guide from C++ TaskFlow
-- [ ] Contributing guide
-
-## Benchmark Ideas
-
-Compare with:
-- C++ TaskFlow
-- Rayon
-- Tokio (for async tasks)
-- Manual thread pools
-
-Metrics:
-- Task throughput
-- Latency
-- Memory overhead
-- Scalability
-- Cache efficiency
-
-## Community and Ecosystem
-
-- [ ] Publish to crates.io
-- [ ] Set up CI/CD
-- [ ] Create GitHub issues/discussions
-- [ ] Write blog post
-- [ ] Present at Rust meetup
-- [ ] Submit to awesome-rust lists
+The `Stub` backend requires no flag and is always available — used in CI, unit tests, and environments without GPU hardware.

@@ -1,50 +1,110 @@
 [package]
 name = "taskflow-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Your Name"]
-description = "A Rust implementation of TaskFlow - a task-parallel programming library"
+description = "A Rust implementation of TaskFlow — task-parallel programming with heterogeneous GPU support"
 license = "MIT"
 repository = "https://github.com/yourusername/taskflow-rs"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+
 [dependencies]
-num_cpus = "1.16"
-crossbeam = "0.8"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"], optional = true }
+num_cpus   = "1.16"
+crossbeam  = "0.8"
+log        = "0.4"
+
+# Async runtime (feature-gated)
+tokio   = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"], optional = true }
 futures = { version = "0.3", optional = true }
-cudarc = { version = "0.11", features = ["std", "driver"], optional = true }
+
+# ── CUDA backend ──────────────────────────────────────────────────────────────
+# cudarc provides safe Rust bindings to the CUDA Driver API.
+# A specific CUDA version feature must be selected.
+cudarc  = { version = "0.11", features = ["std", "driver"], optional = true }
+
+# ── OpenCL backend ────────────────────────────────────────────────────────────
+# opencl3 provides safe OpenCL 3.0 bindings.
+# Works with NVIDIA (via CUDA driver), AMD (ROCm), and Intel (oneAPI).
+opencl3 = { version = "0.9", optional = true }
+
+# ── ROCm/HIP backend ─────────────────────────────────────────────────────────
+# No first-class Rust crate exists; we use raw FFI in gpu_rocm.rs.
+# The `rocm` feature enables the FFI code; the amdhip64.so is linked at
+# runtime from /opt/rocm/lib (set LD_LIBRARY_PATH before running).
+# No extra Cargo dependency needed — just the feature flag.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Features
+# ─────────────────────────────────────────────────────────────────────────────
 
 [features]
 default = []
+
+# Tokio async integration
 async = ["tokio", "futures"]
+
+# ── CUDA (NVIDIA) ─────────────────────────────────────────────────────────────
+# Default CUDA 12.0. Override for your installed version:
+#   gpu = ["cudarc", "cudarc/cuda-11080"]   # CUDA 11.8
+#   gpu = ["cudarc", "cudarc/cuda-12050"]   # CUDA 12.5
 gpu = ["cudarc", "cudarc/cuda-12000"]
-# Alternative CUDA versions (comment out line 22 and uncomment one below):
-# gpu = ["cudarc", "cudarc/cuda-11080"]  # CUDA 11.8
-# gpu = ["cudarc", "cudarc/cuda-12050"]  # CUDA 12.5
+
+# ── OpenCL (NVIDIA / AMD / Intel / Apple) ─────────────────────────────────────
+opencl = ["opencl3"]
+
+# ── ROCm / HIP (AMD) ─────────────────────────────────────────────────────────
+# Enables FFI bindings to libamdhip64.so (ROCm ≥ 5.0 required).
+# Install: https://rocm.docs.amd.com/en/latest/deploy/linux/install.html
+rocm = []
+
+# All GPU backends simultaneously (useful for benchmarking / selection)
+all-gpu = ["gpu", "opencl", "rocm"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build script — ROCm linker flags
+# ─────────────────────────────────────────────────────────────────────────────
+
+[build-dependencies]
+# Used by build.rs to locate ROCm libraries
+# (add `cc` if you need to compile any .hip or .cl kernels)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dev / test dependencies
+# ─────────────────────────────────────────────────────────────────────────────
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio       = { version = "1", features = ["full"] }
+env_logger  = "0.11"
 
-# Examples that require specific features
+# ─────────────────────────────────────────────────────────────────────────────
+# Examples
+# ─────────────────────────────────────────────────────────────────────────────
+
 [[example]]
-name = "async_tasks"
+name             = "async_tasks"
 required-features = ["async"]
 
 [[example]]
-name = "async_parallel"
+name             = "async_parallel"
 required-features = ["async"]
 
 [[example]]
-name = "async_run_variants"
+name             = "async_run_variants"
 required-features = ["async"]
 
 [[example]]
-name = "parallel_run_n"
+name             = "parallel_run_n"
+
+# GPU examples — work with any available backend (fallback to stub)
+[[example]]
+name             = "gpu_tasks"
 
 [[example]]
-name = "gpu_tasks"
-required-features = ["gpu"]
+name             = "gpu_pipeline"
 
 [[example]]
-name = "gpu_pipeline"
-required-features = ["gpu"]
+name             = "gpu_async_streams"
+# No required-features: stub backend always available for CI

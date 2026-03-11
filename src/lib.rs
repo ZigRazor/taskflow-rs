@@ -24,6 +24,22 @@ pub mod async_executor;
 // GPU module - always exists but contents depend on feature flag
 pub mod gpu;
 
+// GPU backend abstraction (trait + probe_backend + BackendKind/GpuError + stub)
+pub mod gpu_backend;
+
+// Stream management (GpuStream, StreamPool, StreamSet, StreamGuard)
+pub mod gpu_stream;
+
+// Backend implementations — compiled only when the matching feature is active
+#[cfg(feature = "gpu")]
+pub mod gpu_cuda_backend;
+
+#[cfg(feature = "opencl")]
+pub mod gpu_opencl;
+
+#[cfg(feature = "rocm")]
+pub mod gpu_rocm;
+
 
 pub use executor::Executor;
 pub use task::{Task, TaskHandle};
@@ -55,7 +71,10 @@ pub use debug::{DebugLogger, LogLevel, LogEntry};
 pub use async_executor::AsyncExecutor;
 
 // GPU types are always exported (stubs when feature is disabled)
+// NEW
 pub use gpu::{GpuDevice, GpuBuffer, GpuTaskConfig};
+pub use gpu_stream::{GpuStream, StreamPool, StreamSet, StreamGuard, StreamAssignment};
+pub use gpu_backend::{BackendKind, GpuError};
 
 // Re-export parallel algorithms
 pub use algorithms::{
