@@ -50,7 +50,7 @@ task-parallel programming library with heterogeneous CPU/GPU support.
 
 ```toml
 [dependencies]
-taskflow-rs = "0.2"
+taskflowrs = "0.1.0"
 ```
 
 ### Basic task graph
