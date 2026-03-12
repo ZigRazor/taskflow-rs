@@ -1,11 +1,13 @@
 [package]
 name = "taskflow-rs"
-version = "0.2.0"
-edition = "2021"
-authors = ["Your Name"]
+version = "0.1.0"
 description = "A Rust implementation of TaskFlow — task-parallel programming with heterogeneous GPU support"
+repository = "https://github.com/ZigRazor/taskflow-rs"
+authors = ["ZigRazor"]
+documentation = "https://docs.rs/taskflow"
 license = "MIT"
-repository = "https://github.com/yourusername/taskflow-rs"
+keywords = ["task", "graph", "parallel", "async", "scheduler"]
+categories = ["concurrency"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dependencies

@@ -1,5 +1,28 @@
 # TaskFlow-RS
 
+<p align="center">
+  <b>A high-performance task graph runtime for Rust</b>
+  <br>
+  Build and execute dependency-based task graphs with parallel scheduling.
+</p>
+
+<p align="center">
+  <a href="https://crates.io/crates/taskflow">
+    <img src="https://img.shields.io/crates/v/taskflow-rs.svg">
+  </a>
+  <a href="https://docs.rs/taskflow-rs">
+    <img src="https://docs.rs/taskflow/badge.svg">
+  </a>
+  <a href="https://github.com/ZigRazor/taskflow-rs/actions">
+    <img src="https://github.com/ZigRazor/taskflow-rs/actions/workflows/ci.yml/badge.svg">
+  </a>
+  <a href="https://opensource.org/licenses/MIT">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg">
+  </a>
+</p>
+
+---
+
 A Rust implementation of [TaskFlow](https://taskflow.github.io/) — a general-purpose
 task-parallel programming library with heterogeneous CPU/GPU support.
 
