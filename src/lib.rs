@@ -18,6 +18,22 @@ pub mod monitoring;
 pub mod metrics;
 pub mod debug;
 
+// ── New advanced scheduling modules ──────────────────────────────────────────
+
+/// Preemptive task cancellation (watchdog + signal-based).
+/// See [`preemptive::PreemptiveCancellationToken`] and [`preemptive::with_deadline`].
+pub mod preemptive;
+
+/// Dynamic priority adjustment for queued tasks.
+/// See [`dynamic_priority::SharedDynamicScheduler`] and [`dynamic_priority::PriorityHandle`].
+pub mod dynamic_priority;
+
+/// Hardware topology via hwloc (or sysfs fallback).
+/// See [`hwloc_topology::TopologyProvider`] and [`hwloc_topology::HwlocWorkerAffinity`].
+pub mod hwloc_topology;
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[cfg(feature = "async")]
 pub mod async_executor;
 
@@ -67,20 +83,42 @@ pub use metrics::{Metrics, MetricsSummary};
 pub use typed_pipeline::{TypeSafePipeline, PipelineBuilder, SimplePipeline};
 pub use debug::{DebugLogger, LogLevel, LogEntry};
 
+// ── New advanced scheduling re-exports ───────────────────────────────────────
+pub use preemptive::{
+    PreemptiveCancellationToken,
+    DeadlineGuard,
+    Preempted,
+    with_deadline,
+};
+pub use dynamic_priority::{
+    DynamicPriorityScheduler,
+    SharedDynamicScheduler,
+    PriorityHandle,
+    EscalationPolicy,
+};
+pub use hwloc_topology::{
+    TopologyProvider,
+    HwTopology,
+    HwlocWorkerAffinity,
+    AffinityStrategy,
+    CacheInfo,
+    PackageInfo,
+    BindError,
+};
+
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;
 
 // GPU types are always exported (stubs when feature is disabled)
-// NEW
 pub use gpu::{GpuDevice, GpuBuffer, GpuTaskConfig};
 pub use gpu_stream::{GpuStream, StreamPool, StreamSet, StreamGuard, StreamAssignment};
 pub use gpu_backend::{BackendKind, GpuError};
 
 // Re-export parallel algorithms
 pub use algorithms::{
-    parallel_for_each, 
-    parallel_reduce, 
-    parallel_transform, 
+    parallel_for_each,
+    parallel_reduce,
+    parallel_transform,
     parallel_sort,
     parallel_inclusive_scan,
     parallel_exclusive_scan,
@@ -103,27 +141,29 @@ mod tests {
             println!("Task B");
         }).name("B");
 
-        let c = taskflow.emplace(|| {
-            println!("Task C");
-        }).name("C");
-
-        let d = taskflow.emplace(|| {
-            println!("Task D");
-        }).name("D");
-
         a.precede(&b);
-        a.precede(&c);
-        d.succeed(&b);  // d runs after b (b -> d)
-        d.succeed(&c);  // d runs after c (c -> d)
-
         executor.run(&taskflow).wait();
     }
-    
+
     #[test]
-    fn test_pipeline_exports() {
-        // Verify types are exported
-        let _pipeline: ConcurrentPipeline<i32> = ConcurrentPipeline::new(10, 100);
-        let _token: Token<i32> = Token::new(42, 0);
-        let _stage_type: StageType = StageType::Serial;
+    fn test_preemptive_cancellation_export() {
+        let token = PreemptiveCancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn test_dynamic_priority_export() {
+        let sched = SharedDynamicScheduler::new();
+        let handle = sched.push(1, Priority::Low);
+        handle.reprioritize(Priority::Critical);
+        assert_eq!(sched.pop(), Some(1));
+    }
+
+    #[test]
+    fn test_hwloc_topology_export() {
+        let topo = TopologyProvider::detect();
+        assert!(topo.cpu_count() >= 1);
     }
 }

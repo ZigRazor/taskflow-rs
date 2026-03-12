@@ -16,9 +16,20 @@ num_cpus   = "1.16"
 crossbeam  = "0.8"
 log        = "0.4"
 
+# Platform helpers (thread affinity on Linux for preemptive/hwloc fallback)
+libc = "0.2"
+
 # Async runtime (feature-gated)
 tokio   = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"], optional = true }
 futures = { version = "0.3", optional = true }
+
+# ── hwloc hardware topology ───────────────────────────────────────────────────
+# Provides rich hardware topology: NUMA, cache hierarchy, CPU binding.
+# Requires libhwloc-dev (>= 2.0) to be installed:
+#   Ubuntu/Debian: apt install libhwloc-dev
+#   Fedora/RHEL:   dnf install hwloc-devel
+#   macOS:         brew install hwloc
+hwloc2 = { version = "2.2.0", optional = true }
 
 # ── CUDA backend ──────────────────────────────────────────────────────────────
 # cudarc provides safe Rust bindings to the CUDA Driver API.
@@ -45,6 +56,11 @@ default = []
 
 # Tokio async integration
 async = ["tokio", "futures"]
+
+# ── Hardware topology (hwloc) ──────────────────────────────────────────────────
+# Enables rich hardware topology discovery and CPU/NUMA binding via hwloc2.
+# Falls back gracefully to sysfs detection when this feature is absent.
+hwloc = ["hwloc2"]
 
 # ── CUDA (NVIDIA) ─────────────────────────────────────────────────────────────
 # Default CUDA 12.0. Override for your installed version:
@@ -97,6 +113,18 @@ required-features = ["async"]
 
 [[example]]
 name             = "parallel_run_n"
+
+[[example]]
+name             = "advanced_features"
+
+[[example]]
+name             = "preemptive_cancellation"
+
+[[example]]
+name             = "dynamic_priority"
+
+[[example]]
+name             = "hardware_topology"
 
 # GPU examples — work with any available backend (fallback to stub)
 [[example]]

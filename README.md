@@ -1,24 +1,27 @@
 # TaskFlow-RS
 
-A Rust implementation of [TaskFlow](https://taskflow.github.io/) — a general-purpose task-parallel programming library with heterogeneous CPU/GPU support.
+A Rust implementation of [TaskFlow](https://taskflow.github.io/) — a general-purpose
+task-parallel programming library with heterogeneous CPU/GPU support.
 
 ## Features
 
-- ✅ **Task Graph Construction** — Build directed acyclic graphs (DAGs) with flexible dependency management
-- ✅ **Lock-Free Work-Stealing Executor** — High-performance multi-threaded scheduler with per-worker queues
+- ✅ **Task Graph Construction** — DAGs with flexible dependency management
+- ✅ **Lock-Free Work-Stealing Executor** — Per-worker queues, near-linear scalability
 - ✅ **Subflows** — Nested task graphs for recursive parallelism
 - ✅ **Condition Tasks** — Conditional branching and loop constructs
-- ✅ **Cycle Detection** — Prevent cycles at graph construction time
+- ✅ **Cycle Detection** — Catches cycles at graph construction time
 - ✅ **Parallel Algorithms** — `for_each`, `reduce`, `transform`, `sort`, `scan`
 - ✅ **Async Task Support** — Full `async`/`await` integration with Tokio
 - ✅ **Pipeline Support** — Stream processing with parallel/serial stages and backpressure
 - ✅ **Composition** — Reusable, parameterized task graph components
-- ✅ **Run Variants** — Run taskflows N times, until a condition, or concurrently
-- ✅ **GPU Support** — CUDA, OpenCL, and ROCm/HIP backends with async transfers and multiple streams
-- ✅ **Advanced Features** — Task priorities, cancellation, custom schedulers, NUMA-aware scheduling
+- ✅ **GPU Support** — CUDA, OpenCL, and ROCm/HIP with async transfers and multiple streams
+- ✅ **Task Priorities** — Static `Low / Normal / High / Critical` priority levels
+- ✅ **Preemptive Cancellation** — Watchdog timeouts, RAII deadline guards, signal preemption
+- ✅ **Dynamic Priority Adjustment** — O(log n) live reprioritization of queued tasks
+- ✅ **Hardware Topology Integration** — hwloc2 / sysfs cache hierarchy, NUMA binding, CPU affinity
 - ✅ **Tooling** — Profiler, DOT/SVG/HTML visualization, performance monitoring, debug logging
-- ✅ **Type-Safe Pipelines** — Compile-time type checking across pipeline stages
-- ✅ **Built-in Metrics** — Comprehensive execution metrics and monitoring
+
+---
 
 ## Quick Start
 
@@ -27,7 +30,7 @@ A Rust implementation of [TaskFlow](https://taskflow.github.io/) — a general-p
 taskflow-rs = "0.2"
 ```
 
-### Basic Example
+### Basic task graph
 
 ```rust
 use taskflow_rs::{Executor, Taskflow};
@@ -36,10 +39,10 @@ fn main() {
     let mut executor = Executor::new(4);
     let mut taskflow = Taskflow::new();
 
-    let a = taskflow.emplace(|| println!("Task A")).name("A");
-    let b = taskflow.emplace(|| println!("Task B")).name("B");
-    let c = taskflow.emplace(|| println!("Task C")).name("C");
-    let d = taskflow.emplace(|| println!("Task D")).name("D");
+    let a = taskflow.emplace(|| println!("A")).name("A");
+    let b = taskflow.emplace(|| println!("B")).name("B");
+    let c = taskflow.emplace(|| println!("C")).name("C");
+    let d = taskflow.emplace(|| println!("D")).name("D");
 
     a.precede(&b);  // A → B
     a.precede(&c);  // A → C
@@ -47,18 +50,307 @@ fn main() {
     d.succeed(&c);  // C → D
 
     executor.run(&taskflow).wait();
-    // Graph: A → B → D
-    //          ↘ C ↗
+    // Execution: A → {B, C} → D
 }
 ```
 
 ---
 
+## Preemptive Cancellation
+
+TaskFlow-RS provides three escalating levels of cancellation, all sharing the same
+`PreemptiveCancellationToken` type.
+
+### Level 1 — Cooperative (polling)
+
+```rust
+use taskflow_rs::PreemptiveCancellationToken;
+
+let token = PreemptiveCancellationToken::new();
+let t = token.clone();
+
+std::thread::spawn(move || {
+    for chunk in big_data.chunks(4096) {
+        t.check()?;          // returns Err(Preempted) when cancelled
+        process(chunk);
+    }
+    Ok(())
+});
+
+token.cancel_with("user requested stop");
+```
+
+### Level 2 — Watchdog timeout
+
+```rust
+use taskflow_rs::PreemptiveCancellationToken;
+use std::time::Duration;
+
+let token = PreemptiveCancellationToken::new();
+
+// Automatically cancel after 500 ms — no manual polling needed.
+token.cancel_after_with(Duration::from_millis(500), "budget exceeded");
+
+// The task checks at its own pace:
+let t = token.clone();
+std::thread::spawn(move || {
+    loop {
+        t.check()?;
+        do_work();
+    }
+    Ok(())
+});
+```
+
+### Level 3 — RAII deadline guard
+
+```rust
+use taskflow_rs::PreemptiveCancellationToken;
+use std::time::Duration;
+
+let token = PreemptiveCancellationToken::new();
+
+{
+    // Guard cancels the token when this scope exits after the budget.
+    let _guard = token.deadline_guard(Duration::from_millis(100));
+    expensive_computation();
+}   // ← token.cancel() fires here if elapsed > 100 ms
+
+// Or use the scoped helper for a closure:
+let result = taskflow_rs::with_deadline(Duration::from_secs(2), |tok| {
+    for item in dataset {
+        tok.check()?;
+        process(item);
+    }
+    Ok(total)
+});
+```
+
+### Token reuse
+
+```rust
+token.cancel_after(Duration::from_millis(50));
+// ... run task ...
+token.reset();   // clear the cancelled flag and reason
+token.cancel_after(Duration::from_millis(50));
+// ... run again ...
+```
+
+### Signal-based preemption (Linux)
+
+```rust
+// Call once at program startup:
+unsafe { PreemptiveCancellationToken::install_signal_handler(); }
+
+// In the task, check the per-thread SIGUSR2 flag:
+PreemptiveCancellationToken::check_signal()?;
+
+// From another thread, preempt a specific OS thread:
+PreemptiveCancellationToken::signal_preempt_thread(pthread_id);
+```
+
+**Run the demo:**
+```bash
+cargo run --example preemptive_cancellation
+```
+
+---
+
+## Dynamic Priority Adjustment
+
+`SharedDynamicScheduler` allows the priority of any queued task to be changed in **O(log n)**
+at any time, including from other threads.
+
+### Basic usage
+
+```rust
+use taskflow_rs::{SharedDynamicScheduler, Priority};
+
+let sched = SharedDynamicScheduler::new();
+
+sched.push(1, Priority::Low);
+sched.push(2, Priority::Normal);
+let handle = sched.push(3, Priority::Low);
+
+// Task 3 became urgent — escalate it before the executor picks it up.
+handle.reprioritize(Priority::Critical);
+
+// Pop order: 3 (Critical), 2 (Normal), 1 (Low)
+while let Some(task_id) = sched.pop() {
+    println!("executing {}", task_id);
+}
+```
+
+### FIFO ordering within equal priority
+
+Sequence numbers assigned at push time are preserved through reprioritization, so tasks at
+the same priority level always execute in insertion order:
+
+```rust
+let h_old = sched.push(10, Priority::Normal);  // seq=0
+let _h_new = sched.push(20, Priority::Normal); // seq=1
+
+// Escalate both to High — seq=0 stays with task 10.
+h_old.reprioritize(Priority::High);
+sched.push(30, Priority::High); // seq=2
+
+// Pop order: 10 (High, seq=0), 30 (High, seq=2), 20 (Normal)
+```
+
+### Cancelling a queued task
+
+```rust
+let handle = sched.push(99, Priority::High);
+
+// Changed our mind — remove it before execution.
+handle.cancel();
+assert!(!handle.is_pending());
+```
+
+### Anti-starvation escalation policy
+
+```rust
+use taskflow_rs::EscalationPolicy;
+
+let mut policy = EscalationPolicy::new(
+    sched.clone(),
+    /* tick_interval   */ 100,   // run escalation every 100 ticks
+    /* low_age_ticks   */ 500,   // Low  → Normal after 500 ticks
+    /* normal_age_ticks */ 1000, // Normal → High  after 1000 ticks
+);
+
+// Call inside the scheduler loop:
+loop {
+    policy.tick();
+    if let Some(id) = sched.pop() {
+        execute(id);
+    }
+}
+```
+
+**Run the demo:**
+```bash
+cargo run --example dynamic_priority
+```
+
+---
+
+## Hardware Topology Integration
+
+`TopologyProvider` exposes full hardware topology (NUMA nodes, CPU packages, L1/L2/L3
+cache hierarchy) and can pin threads to specific CPU sets.
+
+### Topology discovery
+
+```rust
+use taskflow_rs::{TopologyProvider, HwTopology};
+
+let topo = TopologyProvider::detect();
+// Uses hwloc2 when compiled with --features hwloc,
+// falls back to /sys parsing otherwise.
+
+println!("Backend:    {}", topo.backend_name());   // "hwloc2 2.2.0" or "sysfs-fallback"
+println!("CPUs:       {}", topo.cpu_count());
+println!("NUMA nodes: {}", topo.numa_nodes().len());
+
+for node in topo.numa_nodes() {
+    let mem = node.memory_bytes
+        .map(|b| format!("{} MB", b / 1_048_576))
+        .unwrap_or_else(|| "unknown".into());
+    println!("  Node {}: {} CPUs, memory={}", node.id, node.cpus.len(), mem);
+}
+
+for pkg in topo.packages() {
+    println!("  Socket {}: {} CPUs, NUMA={:?}", pkg.id, pkg.cpus.len(), pkg.numa_nodes);
+}
+
+for cache in topo.cache_info() {
+    println!("  L{}: {} KB, line={} B, shared by {} CPUs",
+        cache.level, cache.size_kb, cache.line_size, cache.shared_cpus.len());
+}
+```
+
+### Worker CPU affinity
+
+```rust
+use taskflow_rs::{TopologyProvider, HwlocWorkerAffinity, AffinityStrategy};
+
+let topo   = TopologyProvider::detect();
+let num_workers = 8;
+let affinity = HwlocWorkerAffinity::new(topo, AffinityStrategy::NUMADense, num_workers);
+
+// Inside each worker thread at startup:
+affinity.pin_current_thread(worker_id)?;
+
+// Or just query the CPU set without binding:
+let cpus = affinity.cpus_for_worker(worker_id);
+println!("Worker {} → CPUs {:?}", worker_id, cpus);
+```
+
+Available strategies:
+
+| Strategy | Behaviour |
+|---|---|
+| `None` | No binding; OS decides |
+| `NUMARoundRobin` | Distribute workers evenly across NUMA nodes |
+| `NUMADense` | Fill each NUMA node before moving to the next |
+| `PhysicalCores` | Pin to physical cores; skip hyperthreading siblings |
+| `L3CacheDomain` | Assign workers to L3 cache sharing groups |
+
+### Enabling hwloc
+
+```bash
+# Ubuntu / Debian
+sudo apt install libhwloc-dev
+
+# Fedora / RHEL
+sudo dnf install hwloc-devel
+
+# macOS
+brew install hwloc
+
+# Build with full hwloc support
+cargo build --features hwloc
+```
+
+Without `--features hwloc` the sysfs fallback is used automatically — no code changes
+required. `topo.is_hwloc_backed()` returns `false` so callers can log the difference.
+
+**Run the demo:**
+```bash
+cargo run --example hardware_topology             # sysfs fallback
+cargo run --features hwloc --example hardware_topology  # full hwloc
+```
+
+---
+
+## Static Task Priorities
+
+For simpler use cases where priorities are fixed at enqueue time, use the built-in
+`PriorityScheduler`:
+
+```rust
+use taskflow_rs::{PriorityScheduler, Scheduler, Priority};
+
+let mut scheduler = PriorityScheduler::new();
+scheduler.push(1, Priority::Low);
+scheduler.push(2, Priority::High);
+scheduler.push(3, Priority::Critical);
+
+// Pop order: 3 (Critical), 2 (High), 1 (Low)
+```
+
+For live reprioritization use `SharedDynamicScheduler` instead — it implements the same
+`Scheduler` trait and is a drop-in replacement.
+
+---
+
 ## GPU Support
 
-TaskFlow-RS provides a **backend-agnostic GPU API** supporting CUDA (NVIDIA), OpenCL (NVIDIA/AMD/Intel), and ROCm/HIP (AMD). All three share the same user-facing types — switching hardware requires changing one line.
+TaskFlow-RS provides a **backend-agnostic GPU API** supporting CUDA (NVIDIA), OpenCL
+(NVIDIA/AMD/Intel), and ROCm/HIP (AMD).
 
-### Building with GPU Support
+### Building
 
 ```bash
 # CUDA (NVIDIA) — default CUDA 12.0
@@ -74,226 +366,57 @@ ROCM_PATH=/opt/rocm cargo build --features rocm
 # All backends
 cargo build --features all-gpu
 
-# No GPU (stub backend — always available, no flags needed)
+# Stub backend (always available, no flags needed)
 cargo build
 ```
 
-### Backend Selection
+### Usage
 
 ```rust
-use taskflow_rs::{GpuDevice, BackendKind};
+use taskflow_rs::{GpuDevice, GpuBuffer, BackendKind};
 
 // Auto-select: CUDA → ROCm → OpenCL → Stub
 let device = GpuDevice::new(0)?;
 
-// Explicit backend
+// Force a specific backend
 let device = GpuDevice::with_backend(0, BackendKind::OpenCL)?;
-let device = GpuDevice::with_backend(0, BackendKind::Rocm)?;
 
-println!("{} ({:?})", device.name(), device.backend_kind());
-```
-
-### Synchronous Transfers
-
-```rust
-use taskflow_rs::{GpuDevice, GpuBuffer};
-
-let device = GpuDevice::new(0)?;
+// Allocate and transfer
 let mut buf: GpuBuffer<f32> = GpuBuffer::allocate(&device, 1024)?;
+buf.copy_from_host(&vec![1.0f32; 1024])?;
 
-let src: Vec<f32> = (0..1024).map(|i| i as f32).collect();
-buf.copy_from_host(&src)?;          // blocking H2D
-
-let mut dst = vec![0.0f32; 1024];
-buf.copy_to_host(&mut dst)?;        // blocking D2H
+// Async transfer via stream
+let stream = device.create_stream("compute")?;
+unsafe { buf.copy_from_host_async(&src, &stream)?; }
+stream.synchronize()?;
 ```
-
-### Asynchronous Transfers & Multiple Streams
-
-```rust
-use taskflow_rs::{GpuDevice, GpuBuffer, GpuStream};
-
-let device = GpuDevice::new(0)?;
-
-// ── Stream pool — 4 streams, round-robin assignment ──────────────────────
-let pool = device.stream_pool(4)?;
-
-for batch in batches {
-    let guard  = pool.acquire()?;
-    let stream = guard.stream();
-
-    let mut buf = GpuBuffer::allocate(&device, batch.len())?;
-
-    // Enqueue async H2D — returns immediately on CPU
-    unsafe { buf.copy_from_host_async(&batch, stream)?; }
-}
-pool.synchronize_all()?;            // wait for all streams
-
-// ── Safe async transfers with Tokio ─────────────────────────────────────
-let (buf, data) = buf.copy_from_host_async_owned(data).await?;
-let (buf, result) = buf.copy_to_host_async_owned(result).await?;
-
-// ── Double-buffer pipeline (StreamSet) ──────────────────────────────────
-let set = device.stream_set(2, "pipeline")?;
-
-for (i, batch) in batches.enumerate() {
-    if i >= 2 { set.get(i).synchronize()?; }  // sync slot before reuse
-
-    let stream = set.get(i);
-    unsafe {
-        dev_bufs[i % 2].copy_from_host_async(batch, stream)?;
-        dev_bufs[i % 2].copy_to_host_async(&mut results[i % 2], stream)?;
-    }
-}
-set.synchronize_all()?;
-```
-
-### Multi-Stream in a TaskFlow DAG
-
-```rust
-use std::sync::Arc;
-use taskflow_rs::{Executor, Taskflow, GpuDevice, GpuBuffer};
-
-let device = Arc::new(GpuDevice::new(0)?);
-let pool   = Arc::new(device.stream_pool(4)?);
-
-let mut executor = Executor::new(4);
-let mut taskflow = Taskflow::new();
-
-// Each GPU task picks a stream from the shared pool
-let tasks: Vec<_> = (0..4).map(|i| {
-    let pool_ref   = Arc::clone(&pool);
-    let device_ref = Arc::clone(&device);
-
-    taskflow.emplace(move || {
-        let guard  = pool_ref.acquire().unwrap();
-        let stream = guard.stream();
-
-        let mut buf = GpuBuffer::<f32>::allocate(&device_ref, 1024).unwrap();
-        unsafe { buf.copy_from_host_async(&input[i], stream).unwrap(); }
-        stream.synchronize().unwrap();
-    })
-}).collect();
-
-executor.run(&taskflow).wait();
-pool.synchronize_all()?;
-```
-
-### Heterogeneous CPU+GPU Pipeline
-
-```rust
-use taskflow_rs::{Executor, Taskflow, GpuDevice, GpuBuffer};
-use std::sync::{Arc, Mutex};
-
-let device = GpuDevice::new(0).expect("GPU required");
-let mut executor = Executor::new(4);
-let mut taskflow = Taskflow::new();
-
-let data = Arc::new(Mutex::new(Vec::<f32>::new()));
-
-// Stage 1 — CPU: generate data
-let d1 = data.clone();
-let generate = taskflow.emplace(move || {
-    *d1.lock().unwrap() = (0..1024).map(|i| i as f32).collect();
-});
-
-// Stage 2 — GPU: process on device
-let d2 = data.clone();
-let dev = device.clone();
-let process = taskflow.emplace(move || {
-    let data = d2.lock().unwrap();
-    let mut buf = GpuBuffer::allocate(&dev, data.len()).unwrap();
-    buf.copy_from_host(&data).unwrap();
-    dev.synchronize().unwrap();
-});
-
-// Stage 3 — CPU: validate
-let validate = taskflow.emplace(|| println!("Validated ✓"));
-
-generate.precede(&process);
-process.precede(&validate);
-executor.run(&taskflow).wait();
-```
-
-**See [GPU.md](GPU.md) for the full GPU API reference.**
 
 ---
 
-## Async Tasks
+## Async Support
 
-```rust
-use taskflow_rs::AsyncExecutor;
-
-let executor = AsyncExecutor::new(4);
-let mut taskflow = Taskflow::new();
-
-taskflow.emplace_async(|| async {
-    let result = fetch_data().await;
-    process(result).await;
-});
-
-executor.run_async(&taskflow).await;
-
-// Async run variants
-executor.run_n_async(10, || create_taskflow()).await;
-executor.run_until_async(|| create_taskflow(), || done()).await;
+```toml
+[dependencies]
+taskflow-rs = { version = "0.2", features = ["async"] }
+tokio = { version = "1", features = ["full"] }
 ```
 
-**Build with:** `cargo build --features async`  
-**See [ASYNC_TASKS.md](ASYNC_TASKS.md) for full documentation.**
-
----
-
-## Advanced Features
-
 ```rust
-use taskflow_rs::{
-    Priority, CancellationToken,
-    PriorityScheduler, Scheduler, NumaTopology,
-};
+use taskflow_rs::{AsyncExecutor, Taskflow};
 
-// Task priorities
-let mut scheduler = PriorityScheduler::new();
-scheduler.push(1, Priority::Critical);
-scheduler.push(2, Priority::Normal);
-scheduler.push(3, Priority::Low);
+#[tokio::main]
+async fn main() {
+    let executor = AsyncExecutor::new(4);
+    let mut taskflow = Taskflow::new();
 
-// Cooperative cancellation
-let token = CancellationToken::new();
-let t = token.clone();
-taskflow.emplace(move || {
-    for i in 0..100 {
-        if t.is_cancelled() { return; }
-        process(i);
-    }
-});
-token.cancel();
+    taskflow.emplace_async(|| async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        println!("async task done");
+    });
 
-// NUMA awareness
-let topology = NumaTopology::detect();
-for node in &topology.nodes {
-    println!("NUMA node {}: {} CPUs", node.id, node.cpus.len());
+    executor.run_async(&taskflow).await;
 }
 ```
-
-**See [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for full documentation.**
-
----
-
-## Run Variants
-
-```rust
-// Run N taskflows in parallel
-executor.run_n(10, || create_taskflow()).wait();
-
-// Run until a condition is met
-executor.run_until(|| create_taskflow(), || counter.load(Relaxed) >= 50).wait();
-
-// Run multiple flows concurrently
-executor.run_many_and_wait(&[&flow1, &flow2, &flow3]);
-```
-
-**See [PARALLEL_RUN.md](PARALLEL_RUN.md) and [RUN_VARIANTS.md](RUN_VARIANTS.md).**
 
 ---
 
@@ -307,121 +430,162 @@ let profiler = Profiler::new(4);
 profiler.enable();
 executor.run(&taskflow).wait();
 let profile = profiler.get_profile().unwrap();
-println!("Total: {:?}", profile.total_duration);
+println!("{}", profile.summary());
 
-// Visualization — export to DOT / SVG / HTML
+// Visualization
 generate_dot_graph(&taskflow, "graph.dot");
+// dot -Tsvg graph.dot -o graph.svg
 
 // Real-time metrics
 let metrics = PerformanceMetrics::new();
 println!("Tasks/sec: {:.1}", metrics.tasks_per_second());
+println!("Utilization: {:.1}%", metrics.worker_utilization() * 100.0);
 ```
-
-**See [TOOLING.md](TOOLING.md) for full documentation.**
-
----
-
-## Architecture
-
-### Work-Stealing Executor
-
-```
-Worker 0: [Task] [Task] [Task]  ← Push/Pop (LIFO, own queue)
-                ↓ steal (FIFO)
-Worker 1: [Task] [Task]         ← Idle workers steal from busy ones
-```
-
-- Per-worker lock-free deques (`crossbeam::deque`)
-- LIFO for own tasks (cache-warm), FIFO for stolen tasks
-- Near-linear scalability on multi-core systems
-
-### GPU Backend Architecture
-
-```
-GpuDevice
-  └── Arc<dyn ComputeBackend>   ← runtime dispatch
-        ├── CudaBackend         (--features gpu)
-        ├── OpenCLBackend       (--features opencl)
-        ├── RocmBackend         (--features rocm)
-        └── StubBackend         (always available)
-
-GpuBuffer<T>  ──► DeviceBuffer (Arc<dyn BackendBuffer>)
-GpuStream     ──► DeviceStream (Arc<dyn BackendStream>)
-StreamPool    ──► N × GpuStream  (round-robin or least-pending)
-StreamSet     ──► fixed-depth stream array for pipelining
-```
-
-### Comparison with C++ TaskFlow
-
-| Feature | C++ TaskFlow | TaskFlow-RS |
-|---------|:-----------:|:-----------:|
-| Task Graphs | ✅ | ✅ |
-| Work Stealing | ✅ | ✅ |
-| Subflows | ✅ | ✅ |
-| Condition Tasks | ✅ | ✅ |
-| Parallel Algorithms | ✅ | ✅ |
-| Async Tasks | ✅ | ✅ |
-| Pipeline | ✅ | ✅ |
-| GPU — CUDA | ✅ | ✅ |
-| GPU — OpenCL | ✅ | ✅ |
-| GPU — ROCm/HIP | ✅ | ✅ |
-| Async GPU Transfers | ✅ | ✅ |
-| Multiple GPU Streams | ✅ | ✅ |
-| NUMA Awareness | ✅ | ✅ |
 
 ---
 
 ## Building
 
 ```bash
-# Core (no GPU)
+# Core (no GPU, no hwloc)
 cargo build
 
-# With CUDA
+# With hwloc topology
+cargo build --features hwloc
+
+# With CUDA GPU
 cargo build --features gpu
 
-# With OpenCL
-cargo build --features opencl
+# Everything
+cargo build --features hwloc,all-gpu,async
 
-# With ROCm
-ROCM_PATH=/opt/rocm cargo build --features rocm
+# Release
+cargo build --release
 
-# All GPU backends + async
-cargo build --features all-gpu,async
-
-# Release build
-cargo build --release --features gpu
-
-# Run tests
+# Tests
 cargo test
-cargo test --features gpu      # GPU tests (requires hardware, mostly #[ignore])
+cargo test --features hwloc
 ```
 
 ## Examples
 
 ```bash
-# GPU async streams + multi-stream demo (stub — no GPU needed)
-cargo run --example gpu_async_streams
+# New scheduling features
+cargo run --example preemptive_cancellation
+cargo run --example dynamic_priority
+cargo run --example hardware_topology
+cargo run --features hwloc --example hardware_topology
 
-# With CUDA
-cargo run --features gpu --example gpu_async_streams
-cargo run --features gpu --example gpu_tasks
-cargo run --features gpu --example gpu_pipeline
+# Advanced features (priorities, cooperative cancellation, NUMA)
+cargo run --example advanced_features
 
-# Async tasks
+# Async
 cargo run --features async --example async_tasks
 cargo run --features async --example async_parallel
+
+# GPU (stub — no hardware required)
+cargo run --example gpu_tasks
+cargo run --example gpu_async_streams
+
+# GPU with hardware
+cargo run --features gpu --example gpu_tasks
+cargo run --features gpu --example gpu_pipeline
 ```
+
+---
+
+## Architecture
+
+### Work-stealing executor
+
+```
+Worker 0: [Task] [Task] [Task]  ← push/pop own queue (LIFO, cache-warm)
+                ↓ steal (FIFO)
+Worker 1: [Task] [Task]         ← idle workers steal from busy ones
+```
+
+### Scheduling layer
+
+```
+SharedDynamicScheduler
+  ├── index:   BTreeMap<(RevPriority, SeqNum), TaskId>   O(log n) pop
+  └── reverse: HashMap<TaskId, (RevPriority, SeqNum)>    O(1) lookup
+
+PriorityHandle ──weak──► SharedDynamicScheduler
+                          reprioritize() / cancel() without owning the queue
+
+EscalationPolicy ──tick──► sched.reprioritize(id, bumped_priority)
+                            anti-starvation for Low / Normal tasks
+```
+
+### Preemptive cancellation
+
+```
+PreemptiveCancellationToken
+  ├── Arc<AtomicBool>  ← check() fast path: one Acquire load
+  ├── Condvar          ← watchdog sleep / early wake on manual cancel
+  └── cancel_after()   ── spawns watchdog thread
+                           wait_timeout → drop(guard) → cancel_with_reason()
+                                          ↑ guard dropped BEFORE notify
+                                            (prevents self-deadlock)
+```
+
+### Hardware topology
+
+```
+TopologyProvider::detect()
+  ├── --features hwloc → HwlocBackend  (hwloc2 = "2.2.0")
+  └── default          → SysfsBackend  (/sys/devices/system/cpu/*/cache/)
+
+HwlocWorkerAffinity
+  ├── cpus_for_worker(id) → Vec<usize>
+  └── pin_current_thread(id) → pthread_setaffinity_np (Linux)
+                                hwloc set_cpubind THREAD (hwloc backend)
+```
+
+### GPU backend
+
+```
+GpuDevice  ──Arc<dyn ComputeBackend>──►  CudaBackend   (--features gpu)
+                                          OpenCLBackend  (--features opencl)
+                                          RocmBackend    (--features rocm)
+                                          StubBackend    (always)
+```
+
+---
+
+## Comparison with C++ TaskFlow
+
+| Feature | C++ TaskFlow | TaskFlow-RS |
+|---|:---:|:---:|
+| Task Graphs | ✅ | ✅ |
+| Work-Stealing | ✅ | ✅ |
+| Subflows | ✅ | ✅ |
+| Condition Tasks | ✅ | ✅ |
+| Parallel Algorithms | ✅ | ✅ |
+| Async Tasks | ✅ | ✅ |
+| Pipeline | ✅ | ✅ |
+| GPU — CUDA / OpenCL / ROCm | ✅ | ✅ |
+| Async GPU Transfers | ✅ | ✅ |
+| Multiple GPU Streams | ✅ | ✅ |
+| Task Priorities | ✅ | ✅ |
+| Cooperative Cancellation | ✅ | ✅ |
+| Preemptive Cancellation | ✅ | ✅ |
+| Dynamic Priority Adjustment | ✅ | ✅ |
+| Hardware Topology (hwloc) | ✅ | ✅ |
+| NUMA-Aware Scheduling | ✅ | ✅ |
+
+---
 
 ## Documentation
 
 | Document | Contents |
-|----------|----------|
-| [GPU.md](GPU.md) | Full GPU API: backends, streams, async transfers, patterns |
-| [GPU_SETUP.md](GPU_SETUP.md) | CUDA version configuration, ROCm install, troubleshooting |
-| [DESIGN.md](DESIGN.md) | Architecture decisions, implementation status, feature checklist |
-| [ASYNC_TASKS.md](ASYNC_TASKS.md) | Async executor and task documentation |
+|---|---|
+| [DESIGN.md](DESIGN.md) | Architecture, implementation status, design decisions |
 | [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) | Priorities, cancellation, schedulers, NUMA |
+| [GPU.md](GPU.md) | Full GPU API: backends, streams, async transfers |
+| [GPU_SETUP.md](GPU_SETUP.md) | CUDA version config, ROCm install, troubleshooting |
+| [ASYNC_TASKS.md](ASYNC_TASKS.md) | Async executor and task documentation |
 | [PIPELINE.md](PIPELINE.md) | Concurrent pipeline documentation |
 | [TOOLING.md](TOOLING.md) | Profiler, visualization, monitoring |
 
