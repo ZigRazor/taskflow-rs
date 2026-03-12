@@ -7,11 +7,11 @@
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/taskflow">
-    <img src="https://img.shields.io/crates/v/taskflow-rs.svg">
+  <a href="https://crates.io/crates/taskflowrs">
+    <img src="https://img.shields.io/crates/v/taskflowrs.svg">
   </a>
-  <a href="https://docs.rs/taskflow-rs">
-    <img src="https://docs.rs/taskflow/badge.svg">
+  <a href="https://docs.rs/taskflowrs">
+    <img src="https://docs.rs/taskflowrs/badge.svg">
   </a>
   <a href="https://github.com/ZigRazor/taskflow-rs/actions">
     <img src="https://github.com/ZigRazor/taskflow-rs/actions/workflows/ci.yml/badge.svg">
@@ -173,6 +173,7 @@ PreemptiveCancellationToken::signal_preempt_thread(pthread_id);
 ```
 
 **Run the demo:**
+
 ```bash
 cargo run --example preemptive_cancellation
 ```
@@ -252,6 +253,7 @@ loop {
 ```
 
 **Run the demo:**
+
 ```bash
 cargo run --example dynamic_priority
 ```
@@ -340,6 +342,7 @@ Without `--features hwloc` the sysfs fallback is used automatically — no code 
 required. `topo.is_hwloc_backed()` returns `false` so callers can log the difference.
 
 **Run the demo:**
+
 ```bash
 cargo run --example hardware_topology             # sysfs fallback
 cargo run --features hwloc --example hardware_topology  # full hwloc
