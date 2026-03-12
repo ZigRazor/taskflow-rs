@@ -1,10 +1,10 @@
 [package]
-name = "taskflow-rs"
+name = "taskflowrs"
 version = "0.1.0"
 description = "A Rust implementation of TaskFlow — task-parallel programming with heterogeneous GPU support"
 repository = "https://github.com/ZigRazor/taskflow-rs"
 authors = ["ZigRazor"]
-documentation = "https://docs.rs/taskflow"
+documentation = "https://docs.rs/taskflowrs"
 license = "MIT"
 keywords = ["task", "graph", "parallel", "async", "scheduler"]
 categories = ["concurrency"]
