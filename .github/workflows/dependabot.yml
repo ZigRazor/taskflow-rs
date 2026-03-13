@@ -1,4 +1,3 @@
-version: 2
 updates:
   # Keep GitHub Actions versions up to date
   - package-ecosystem: github-actions
