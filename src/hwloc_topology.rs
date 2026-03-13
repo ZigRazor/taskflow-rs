@@ -118,7 +118,7 @@ pub trait HwTopology: Send + Sync {
     ///
     /// Returns `Err(BindError)` if the OS call fails or if the backend does
     /// not support binding.
-    fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError>;
+    fn bind_thread(&mut self, cpus: &[usize]) -> Result<(), BindError>;
 
     /// Which NUMA node owns `cpu`, or `None` if not determinable.
     fn numa_node_for_cpu(&self, cpu: usize) -> Option<usize>;
@@ -327,7 +327,7 @@ mod hwloc_backend {
             Self::extract_caches(&self.topology)
         }
 
-        fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> {
+        fn bind_thread(&mut self, cpus: &[usize]) -> Result<(), BindError> {
             if cpus.is_empty() {
                 return Ok(());
             }
@@ -467,7 +467,7 @@ mod sysfs_backend {
             self.caches.clone()
         }
 
-        fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> {
+        fn bind_thread(&mut self, cpus: &[usize]) -> Result<(), BindError> {
             bind_thread_sysfs(cpus)
         }
 
@@ -616,7 +616,7 @@ impl HwTopology for TopologyProvider {
     fn cache_info(&self) -> Vec<CacheInfo> {
         self.inner.cache_info()
     }
-    fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> {
+    fn bind_thread(&mut self, cpus: &[usize]) -> Result<(), BindError> {
         self.inner.bind_thread(cpus)
     }
     fn numa_node_for_cpu(&self, cpu: usize) -> Option<usize> {
@@ -726,7 +726,7 @@ impl HwlocWorkerAffinity {
     }
 
     /// Pin the current thread for `worker_id`.
-    pub fn pin_current_thread(&self, worker_id: usize) -> Result<(), BindError> {
+    pub fn pin_current_thread(&mut self, worker_id: usize) -> Result<(), BindError> {
         let cpus = self.cpus_for_worker(worker_id);
         if cpus.is_empty() {
             return Ok(());
@@ -854,7 +854,7 @@ mod tests {
     #[test]
     fn bind_thread_none_strategy_is_noop() {
         let topo = TopologyProvider::detect();
-        let affinity = HwlocWorkerAffinity::new(topo, AffinityStrategy::None, 4);
+        let mut affinity = HwlocWorkerAffinity::new(topo, AffinityStrategy::None, 4);
         // Should always succeed (no-op).
         assert!(affinity.pin_current_thread(0).is_ok());
     }
