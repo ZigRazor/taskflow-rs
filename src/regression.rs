@@ -554,7 +554,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, &d)| TaskStats {
-                    task_id: (i + 1) as u64,
+                    task_id: (i + 1) as usize,
                     name: Some(format!("task_{}", i)),
                     start_time: start,
                     duration: Duration::from_millis(d),

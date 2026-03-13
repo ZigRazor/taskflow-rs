@@ -597,7 +597,6 @@ mod tests {
 
     #[test]
     fn concurrent_push_reprioritize() {
-        use std::sync::Arc;
         let sched = SharedDynamicScheduler::new();
         let sched2 = sched.clone();
 

@@ -219,10 +219,7 @@ impl<T: Copy + 'static> GpuBuffer<T> {
     /// let (mut buf, src) = buf.copy_from_host_async_owned(src).await?;
     /// ```
     #[cfg(feature = "async")]
-    pub async fn copy_from_host_async_owned(
-        mut self,
-        src: Vec<T>,
-    ) -> Result<(Self, Vec<T>), GpuError>
+    pub async fn copy_from_host_async_owned(self, src: Vec<T>) -> Result<(Self, Vec<T>), GpuError>
     where
         T: Send + 'static,
     {
@@ -230,6 +227,7 @@ impl<T: Copy + 'static> GpuBuffer<T> {
 
         // Clone what we need to move into the blocking thread
         let backend = Arc::clone(&self.device.backend);
+        let backend_err = backend.clone();
         let inner = Arc::clone(&self.inner);
         let len = self.len;
 
@@ -240,7 +238,7 @@ impl<T: Copy + 'static> GpuBuffer<T> {
             Ok(src)
         })
         .await
-        .map_err(|e| GpuError::new(backend.kind(), format!("join error: {}", e)))??;
+        .map_err(|e| GpuError::new(backend_err.kind(), format!("join error: {}", e)))??;
 
         Ok((self, src))
     }
@@ -254,6 +252,7 @@ impl<T: Copy + 'static> GpuBuffer<T> {
         use tokio::task;
 
         let backend = Arc::clone(&self.device.backend);
+        let backend_err = backend.clone();
         let inner = Arc::clone(&self.inner);
         let len = self.len;
 
@@ -264,7 +263,7 @@ impl<T: Copy + 'static> GpuBuffer<T> {
             Ok(dst)
         })
         .await
-        .map_err(|e| GpuError::new(backend.kind(), format!("join error: {}", e)))??;
+        .map_err(|e| GpuError::new(backend_err.kind(), format!("join error: {}", e)))??;
 
         Ok((self, dst))
     }

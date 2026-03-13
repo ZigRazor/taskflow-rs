@@ -531,7 +531,7 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
 
-        let result = with_deadline(Duration::from_millis(80), |tok| loop {
+        let result: Result<(), _> = with_deadline(Duration::from_millis(80), |tok| loop {
             tok.check()?;
             c.fetch_add(1, AO::Relaxed);
             thread::sleep(Duration::from_millis(20));

@@ -178,13 +178,13 @@ mod hwloc_backend {
                     let cpus: Vec<usize> = obj
                         .cpuset()
                         .iter()
-                        .flat_map(|cs| cs.iter().map(|c| c as usize))
+                        .flat_map(|cs| cs.into_iter().map(|c| c as usize))
                         .collect();
                     for &cpu in &cpus {
                         cpu_to_node.insert(cpu, id);
                     }
                     // local_memory() is on TopologyObjectMemory
-                    let memory_bytes = Some(obj.memory().local_memory());
+                    let memory_bytes = Some(obj.total_memory().local_memory());
                     numa_nodes.push(NumaNode {
                         id,
                         cpus,
@@ -230,7 +230,7 @@ mod hwloc_backend {
                     let cpus: Vec<usize> = obj
                         .cpuset()
                         .iter()
-                        .flat_map(|cs| cs.iter().map(|c| c as usize))
+                        .flat_map(|cs| cs.into_iter().map(|c| c as usize))
                         .collect();
                     let numa_node_ids = numa_nodes
                         .iter()
@@ -268,7 +268,7 @@ mod hwloc_backend {
                     let shared_cpus: Vec<usize> = obj
                         .cpuset()
                         .iter()
-                        .flat_map(|cs| cs.iter().map(|c| c as usize))
+                        .flat_map(|cs| cs.into_iter().map(|c| c as usize))
                         .collect();
 
                     // Cache attributes: hwloc2 2.2.0 exposes these through
@@ -299,8 +299,8 @@ mod hwloc_backend {
         // `cache_attributes()` is the stable method name in hwloc2 2.2.0.
         if let Some(ca) = obj.cache_attributes() {
             let size_kb = ca.size() / 1024;
-            let line = ca.line_size() as u32;
-            let assoc = ca.associativity().unsigned_abs();
+            let line = ca.line_size as u32;
+            let assoc = ca.associativity.unsigned_abs();
             (size_kb, line, assoc)
         } else {
             (0, 64, 0)
@@ -340,7 +340,7 @@ mod hwloc_backend {
 
             // CpuBindFlags::THREAD binds the calling OS thread.
             self.topology
-                .set_cpubind(cpuset, CpuBindFlags::THREAD)
+                .set_cpubind(cpuset, CpuBindFlags::STRICT)
                 .map_err(|e| BindError(format!("hwloc bind_thread failed: {:?}", e)))
         }
 
