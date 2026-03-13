@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # Keep GitHub Actions versions up to date
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Keep Cargo (Rust) dependencies up to date
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    # Open PRs for minor + patch updates; require manual review for major
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
