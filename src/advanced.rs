@@ -52,23 +52,23 @@ impl CancellationToken {
             cancel_count: Arc::new(AtomicUsize::new(0)),
         }
     }
-    
+
     /// Cancel this token
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.cancel_count.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Check if this token is cancelled
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
-    
+
     /// Reset the cancellation (allow reuse)
     pub fn reset(&self) {
         self.cancelled.store(false, Ordering::Release);
     }
-    
+
     /// Get the number of times this has been cancelled
     pub fn cancel_count(&self) -> usize {
         self.cancel_count.load(Ordering::Relaxed)
@@ -110,7 +110,7 @@ impl TaskMetadata {
             ..Default::default()
         }
     }
-    
+
     /// Create with cancellation token
     pub fn with_cancellation(token: CancellationToken) -> Self {
         Self {
@@ -118,7 +118,7 @@ impl TaskMetadata {
             ..Default::default()
         }
     }
-    
+
     /// Create with NUMA node hint
     pub fn with_numa_node(node: i32) -> Self {
         Self {
@@ -126,7 +126,7 @@ impl TaskMetadata {
             ..Default::default()
         }
     }
-    
+
     /// Check if task should be cancelled
     pub fn should_cancel(&self) -> bool {
         self.cancellation_token
@@ -138,14 +138,14 @@ impl TaskMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_priority_ordering() {
         assert!(Priority::Critical > Priority::High);
         assert!(Priority::High > Priority::Normal);
         assert!(Priority::Normal > Priority::Low);
     }
-    
+
     #[test]
     fn test_priority_conversion() {
         assert_eq!(Priority::from(0), Priority::Low);
@@ -153,30 +153,30 @@ mod tests {
         assert_eq!(Priority::from(10), Priority::High);
         assert_eq!(Priority::from(20), Priority::Critical);
     }
-    
+
     #[test]
     fn test_cancellation_token() {
         let token = CancellationToken::new();
         assert!(!token.is_cancelled());
-        
+
         token.cancel();
         assert!(token.is_cancelled());
         assert_eq!(token.cancel_count(), 1);
-        
+
         token.reset();
         assert!(!token.is_cancelled());
     }
-    
+
     #[test]
     fn test_task_metadata() {
         let meta = TaskMetadata::with_priority(Priority::High);
         assert_eq!(meta.priority, Priority::High);
         assert!(!meta.should_cancel());
-        
+
         let token = CancellationToken::new();
         let meta = TaskMetadata::with_cancellation(token.clone());
         assert!(!meta.should_cancel());
-        
+
         token.cancel();
         assert!(meta.should_cancel());
     }

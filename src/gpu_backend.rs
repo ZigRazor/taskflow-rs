@@ -27,7 +27,10 @@ pub struct GpuError {
 
 impl GpuError {
     pub fn new(backend: BackendKind, msg: impl Into<String>) -> Self {
-        Self { backend, message: msg.into() }
+        Self {
+            backend,
+            message: msg.into(),
+        }
     }
 
     pub fn cuda(msg: impl Into<String>) -> Self {
@@ -67,10 +70,10 @@ pub enum BackendKind {
 impl fmt::Display for BackendKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BackendKind::Cuda   => write!(f, "CUDA"),
+            BackendKind::Cuda => write!(f, "CUDA"),
             BackendKind::OpenCL => write!(f, "OpenCL"),
-            BackendKind::Rocm   => write!(f, "ROCm/HIP"),
-            BackendKind::Stub   => write!(f, "Stub"),
+            BackendKind::Rocm => write!(f, "ROCm/HIP"),
+            BackendKind::Stub => write!(f, "Stub"),
         }
     }
 }
@@ -83,7 +86,7 @@ impl fmt::Display for BackendKind {
 /// this handle frees the device memory through the `BackendBuffer` trait.
 pub trait BackendBuffer: Send + Sync + fmt::Debug {
     fn size_bytes(&self) -> usize;
-    fn device_ptr(&self) -> *const std::ffi::c_void;  // for kernel launching
+    fn device_ptr(&self) -> *const std::ffi::c_void; // for kernel launching
     /// Required for downcasting `Arc<dyn BackendBuffer>` to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
 }
@@ -130,7 +133,7 @@ pub trait ComputeBackend: Send + Sync + fmt::Debug + 'static {
     // ---- Identity ----------------------------------------------------------
 
     fn kind(&self) -> BackendKind;
-    fn name(&self) -> &str;   // e.g. "NVIDIA GeForce RTX 4090"
+    fn name(&self) -> &str; // e.g. "NVIDIA GeForce RTX 4090"
     fn device_id(&self) -> usize;
 
     // ---- Memory ------------------------------------------------------------
@@ -210,7 +213,7 @@ pub fn probe_backend(
 ) -> Result<Arc<dyn ComputeBackend>, GpuError> {
     let order: Vec<BackendKind> = match preferred {
         Some(k) => vec![k],
-        None    => vec![
+        None => vec![
             BackendKind::Cuda,
             BackendKind::Rocm,
             BackendKind::OpenCL,
@@ -291,36 +294,60 @@ pub mod stub {
     }
 
     impl BackendBuffer for StubBuffer {
-        fn size_bytes(&self) -> usize { self.data.len() }
+        fn size_bytes(&self) -> usize {
+            self.data.len()
+        }
         fn device_ptr(&self) -> *const std::ffi::c_void {
             self.data.as_ptr() as *const _
         }
-        fn as_any(&self) -> &dyn std::any::Any { self }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     #[derive(Debug)]
-    pub struct StubStream { pub id: u64 }
+    pub struct StubStream {
+        pub id: u64,
+    }
 
     impl BackendStream for StubStream {
-        fn id(&self) -> u64 { self.id }
-        fn synchronize(&self) -> Result<(), GpuError> { Ok(()) }
-        fn as_any(&self) -> &dyn std::any::Any { self }
+        fn id(&self) -> u64 {
+            self.id
+        }
+        fn synchronize(&self) -> Result<(), GpuError> {
+            Ok(())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     #[derive(Debug)]
-    pub struct StubBackend { device_id: usize }
+    pub struct StubBackend {
+        device_id: usize,
+    }
 
     impl StubBackend {
-        pub fn new(device_id: usize) -> Self { Self { device_id } }
+        pub fn new(device_id: usize) -> Self {
+            Self { device_id }
+        }
     }
 
     impl ComputeBackend for StubBackend {
-        fn kind(&self)      -> BackendKind { BackendKind::Stub }
-        fn name(&self)      -> &str        { "Stub (no hardware)" }
-        fn device_id(&self) -> usize       { self.device_id }
+        fn kind(&self) -> BackendKind {
+            BackendKind::Stub
+        }
+        fn name(&self) -> &str {
+            "Stub (no hardware)"
+        }
+        fn device_id(&self) -> usize {
+            self.device_id
+        }
 
         fn alloc_bytes(&self, size: usize) -> Result<DeviceBuffer, GpuError> {
-            Ok(Arc::new(StubBuffer { data: vec![0u8; size] }))
+            Ok(Arc::new(StubBuffer {
+                data: vec![0u8; size],
+            }))
         }
 
         fn htod_sync(
@@ -370,7 +397,9 @@ pub mod stub {
             Ok(Arc::new(StubStream { id }))
         }
 
-        fn synchronize_device(&self) -> Result<(), GpuError> { Ok(()) }
+        fn synchronize_device(&self) -> Result<(), GpuError> {
+            Ok(())
+        }
 
         fn memory_info(&self) -> Result<(usize, usize), GpuError> {
             Ok((8 * 1024 * 1024 * 1024, 8 * 1024 * 1024 * 1024)) // pretend 8 GB

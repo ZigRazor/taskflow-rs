@@ -11,14 +11,12 @@
 //   AsyncTransfer – future-based transfer builder
 // ============================================================================
 
-pub use crate::gpu_stream::{
-    GpuStream, StreamAssignment, StreamGuard, StreamPool, StreamSet,
-};
 pub use crate::gpu_backend::{BackendKind, GpuError};
+pub use crate::gpu_stream::{GpuStream, StreamAssignment, StreamGuard, StreamPool, StreamSet};
 
-use crate::gpu_backend::{ComputeBackend, DeviceBuffer, probe_backend};
-use std::sync::Arc;
+use crate::gpu_backend::{probe_backend, ComputeBackend, DeviceBuffer};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // GpuDevice
@@ -53,10 +51,14 @@ impl GpuDevice {
     }
 
     /// Which backend is active.
-    pub fn backend_kind(&self) -> BackendKind { self.backend.kind() }
+    pub fn backend_kind(&self) -> BackendKind {
+        self.backend.kind()
+    }
 
     /// Human-readable device name.
-    pub fn name(&self) -> &str { self.backend.name() }
+    pub fn name(&self) -> &str {
+        self.backend.name()
+    }
 
     /// Block until all device work completes.
     pub fn synchronize(&self) -> Result<(), GpuError> {
@@ -105,9 +107,9 @@ impl GpuDevice {
 /// All transfers go through the active backend so the same code works with
 /// CUDA, OpenCL, and ROCm.
 pub struct GpuBuffer<T: Copy + 'static> {
-    inner:   DeviceBuffer,
-    len:     usize,
-    device:  GpuDevice,
+    inner: DeviceBuffer,
+    len: usize,
+    device: GpuDevice,
     _marker: PhantomData<T>,
 }
 
@@ -126,32 +128,42 @@ impl<T: Copy + 'static> GpuBuffer<T> {
         })
     }
 
-    pub fn len(&self) -> usize { self.len }
-    pub fn is_empty(&self) -> bool { self.len == 0 }
-    pub fn size_bytes(&self) -> usize { self.len * std::mem::size_of::<T>() }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn size_bytes(&self) -> usize {
+        self.len * std::mem::size_of::<T>()
+    }
 
     // ---- Synchronous transfers -------------------------------------------
 
     /// Blocking host→device copy.
     pub fn copy_from_host(&mut self, src: &[T]) -> Result<(), GpuError> {
-        assert_eq!(src.len(), self.len, "GpuBuffer::copy_from_host length mismatch");
+        assert_eq!(
+            src.len(),
+            self.len,
+            "GpuBuffer::copy_from_host length mismatch"
+        );
         let bytes = src.len() * std::mem::size_of::<T>();
-        self.device.backend.htod_sync(
-            src.as_ptr() as *const _,
-            bytes,
-            &self.inner,
-        )
+        self.device
+            .backend
+            .htod_sync(src.as_ptr() as *const _, bytes, &self.inner)
     }
 
     /// Blocking device→host copy.
     pub fn copy_to_host(&self, dst: &mut [T]) -> Result<(), GpuError> {
-        assert_eq!(dst.len(), self.len, "GpuBuffer::copy_to_host length mismatch");
+        assert_eq!(
+            dst.len(),
+            self.len,
+            "GpuBuffer::copy_to_host length mismatch"
+        );
         let bytes = dst.len() * std::mem::size_of::<T>();
-        self.device.backend.dtoh_sync(
-            &self.inner,
-            dst.as_mut_ptr() as *mut _,
-            bytes,
-        )
+        self.device
+            .backend
+            .dtoh_sync(&self.inner, dst.as_mut_ptr() as *mut _, bytes)
     }
 
     // ---- Asynchronous transfers ------------------------------------------
@@ -172,12 +184,9 @@ impl<T: Copy + 'static> GpuBuffer<T> {
     ) -> Result<(), GpuError> {
         assert_eq!(src.len(), self.len, "async H2D length mismatch");
         let bytes = src.len() * std::mem::size_of::<T>();
-        self.device.backend.htod_async(
-            src.as_ptr() as *const _,
-            bytes,
-            &self.inner,
-            &stream.inner,
-        )
+        self.device
+            .backend
+            .htod_async(src.as_ptr() as *const _, bytes, &self.inner, &stream.inner)
     }
 
     /// Enqueue a device→host copy on `stream`.
@@ -221,8 +230,8 @@ impl<T: Copy + 'static> GpuBuffer<T> {
 
         // Clone what we need to move into the blocking thread
         let backend = Arc::clone(&self.device.backend);
-        let inner   = Arc::clone(&self.inner);
-        let len     = self.len;
+        let inner = Arc::clone(&self.inner);
+        let len = self.len;
 
         let src = task::spawn_blocking(move || -> Result<Vec<T>, GpuError> {
             assert_eq!(src.len(), len, "async_owned H2D length mismatch");
@@ -238,18 +247,15 @@ impl<T: Copy + 'static> GpuBuffer<T> {
 
     /// Safe async device→host transfer using `tokio::task::spawn_blocking`.
     #[cfg(feature = "async")]
-    pub async fn copy_to_host_async_owned(
-        self,
-        mut dst: Vec<T>,
-    ) -> Result<(Self, Vec<T>), GpuError>
+    pub async fn copy_to_host_async_owned(self, mut dst: Vec<T>) -> Result<(Self, Vec<T>), GpuError>
     where
         T: Send + 'static,
     {
         use tokio::task;
 
         let backend = Arc::clone(&self.device.backend);
-        let inner   = Arc::clone(&self.inner);
-        let len     = self.len;
+        let inner = Arc::clone(&self.inner);
+        let len = self.len;
 
         let dst = task::spawn_blocking(move || -> Result<Vec<T>, GpuError> {
             assert_eq!(dst.len(), len, "async_owned D2H length mismatch");
@@ -265,8 +271,12 @@ impl<T: Copy + 'static> GpuBuffer<T> {
 
     // ---- Raw access -------------------------------------------------------
 
-    pub fn device_buffer(&self) -> &DeviceBuffer { &self.inner }
-    pub fn device(&self) -> &GpuDevice { &self.device }
+    pub fn device_buffer(&self) -> &DeviceBuffer {
+        &self.inner
+    }
+    pub fn device(&self) -> &GpuDevice {
+        &self.device
+    }
 }
 
 impl<T: Copy + 'static> std::fmt::Debug for GpuBuffer<T> {
@@ -287,35 +297,47 @@ impl<T: Copy + 'static> std::fmt::Debug for GpuBuffer<T> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct GpuTaskConfig {
-    pub grid_dim:         (u32, u32, u32),
-    pub block_dim:        (u32, u32, u32),
+    pub grid_dim: (u32, u32, u32),
+    pub block_dim: (u32, u32, u32),
     pub shared_mem_bytes: u32,
 }
 
 impl Default for GpuTaskConfig {
     fn default() -> Self {
-        Self { grid_dim: (1, 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: 0 }
+        Self {
+            grid_dim: (1, 1, 1),
+            block_dim: (256, 1, 1),
+            shared_mem_bytes: 0,
+        }
     }
 }
 
 impl GpuTaskConfig {
     pub fn linear(num_elements: usize, threads_per_block: u32) -> Self {
         let blocks = (num_elements as u32 + threads_per_block - 1) / threads_per_block;
-        Self { grid_dim: (blocks, 1, 1), block_dim: (threads_per_block, 1, 1), shared_mem_bytes: 0 }
+        Self {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (threads_per_block, 1, 1),
+            shared_mem_bytes: 0,
+        }
     }
 
     pub fn grid_2d(width: u32, height: u32, block_size: (u32, u32)) -> Self {
-        let bx = (width  + block_size.0 - 1) / block_size.0;
+        let bx = (width + block_size.0 - 1) / block_size.0;
         let by = (height + block_size.1 - 1) / block_size.1;
-        Self { grid_dim: (bx, by, 1), block_dim: (block_size.0, block_size.1, 1), shared_mem_bytes: 0 }
+        Self {
+            grid_dim: (bx, by, 1),
+            block_dim: (block_size.0, block_size.1, 1),
+            shared_mem_bytes: 0,
+        }
     }
 
     /// Convert to cudarc's `LaunchConfig` (CUDA only).
     #[cfg(feature = "gpu")]
     pub fn to_launch_config(&self) -> cudarc::driver::LaunchConfig {
         cudarc::driver::LaunchConfig {
-            grid_dim:         self.grid_dim,
-            block_dim:        self.block_dim,
+            grid_dim: self.grid_dim,
+            block_dim: self.block_dim,
             shared_mem_bytes: self.shared_mem_bytes,
         }
     }
@@ -336,8 +358,8 @@ impl GpuTaskConfig {
 ///     .await
 /// ```
 pub struct AsyncTransferBuilder<'a> {
-    pool:   &'a StreamPool,
-    ops:    Vec<TransferOp>,
+    pool: &'a StreamPool,
+    ops: Vec<TransferOp>,
 }
 
 enum TransferOp {
@@ -348,7 +370,10 @@ enum TransferOp {
 
 impl<'a> AsyncTransferBuilder<'a> {
     pub fn new(pool: &'a StreamPool) -> Self {
-        Self { pool, ops: Vec::new() }
+        Self {
+            pool,
+            ops: Vec::new(),
+        }
     }
 
     /// Enqueue a blocking H2D copy (will be deferred to submit time).
@@ -359,14 +384,12 @@ impl<'a> AsyncTransferBuilder<'a> {
     ) -> Self {
         // We need owned data; caller should use `h2d_owned` for safe async.
         let backend = Arc::clone(&buf.device.backend);
-        let inner   = Arc::clone(&buf.inner);
-        let ptr     = src.as_ptr() as usize; // transmit pointer as usize
-        let bytes   = src.len() * std::mem::size_of::<T>();
+        let inner = Arc::clone(&buf.inner);
+        let ptr = src.as_ptr() as usize; // transmit pointer as usize
+        let bytes = src.len() * std::mem::size_of::<T>();
 
         self.ops.push(TransferOp::Enqueue {
-            exec: Box::new(move |_stream| {
-                backend.htod_sync(ptr as *const _, bytes, &inner)
-            }),
+            exec: Box::new(move |_stream| backend.htod_sync(ptr as *const _, bytes, &inner)),
         });
         self
     }

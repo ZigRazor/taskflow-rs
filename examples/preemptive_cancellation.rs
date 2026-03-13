@@ -2,13 +2,15 @@
 //!
 //! Run:  cargo run --example preemptive_cancellation
 
-use taskflow_rs::{
-    Executor, Taskflow,
-    PreemptiveCancellationToken, DeadlineGuard, Preempted, with_deadline,
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
+use taskflow_rs::{
+    with_deadline, DeadlineGuard, Executor, Preempted, PreemptiveCancellationToken, Taskflow,
+};
 
 fn main() {
     println!("=== Preemptive Cancellation Demo ===\n");
@@ -37,18 +39,22 @@ fn demo_watchdog_timeout() {
     println!("1. Watchdog timeout");
     println!("   Task runs until watchdog fires after 100 ms\n");
 
-    let token  = PreemptiveCancellationToken::new();
-    let iters  = Arc::new(AtomicUsize::new(0));
+    let token = PreemptiveCancellationToken::new();
+    let iters = Arc::new(AtomicUsize::new(0));
 
     // Budget: 100 ms
     token.cancel_after_with(Duration::from_millis(100), "budget exceeded");
 
-    let t   = token.clone();
+    let t = token.clone();
     let ctr = iters.clone();
     let handle = thread::spawn(move || {
         for i in 0..1_000_000 {
             if t.is_cancelled() {
-                println!("   [worker] preempted at iteration {} (reason: {:?})", i, t.reason());
+                println!(
+                    "   [worker] preempted at iteration {} (reason: {:?})",
+                    i,
+                    t.reason()
+                );
                 break;
             }
             ctr.fetch_add(1, Ordering::Relaxed);
@@ -105,10 +111,13 @@ fn demo_deadline_guard_raii() {
     {
         let _guard: DeadlineGuard = token.deadline_guard(Duration::from_millis(100));
         thread::sleep(Duration::from_millis(200)); // intentionally overrun
-        // _guard drops here → cancels token because elapsed > budget
+                                                   // _guard drops here → cancels token because elapsed > budget
     }
 
-    println!("   Token cancelled after guard drop: {}", token.is_cancelled());
+    println!(
+        "   Token cancelled after guard drop: {}",
+        token.is_cancelled()
+    );
     assert!(token.is_cancelled());
     println!("   ✓ DeadlineGuard correctly cancelled the token");
 }
@@ -124,7 +133,7 @@ fn demo_with_deadline_scoped() {
 
     let result = with_deadline(Duration::from_millis(120), |tok| {
         for step in 0u32..100 {
-            tok.check()?;                          // returns Err when cancelled
+            tok.check()?; // returns Err when cancelled
             thread::sleep(Duration::from_millis(20));
             c.fetch_add(1, Ordering::Relaxed);
             println!("   [step {}] working...", step);
@@ -134,7 +143,7 @@ fn demo_with_deadline_scoped() {
 
     match result {
         Err(ref e) => println!("   Task preempted: {}", e),
-        Ok(v)      => println!("   Task finished: result={}", v),
+        Ok(v) => println!("   Task finished: result={}", v),
     }
     println!("   Steps completed: {}", completed.load(Ordering::Relaxed));
     println!("   ✓ with_deadline correctly interrupted the closure");
@@ -146,7 +155,7 @@ fn demo_parallel_tasks_with_shared_token() {
     println!("5. Shared token across parallel tasks");
     println!("   One token cancels all tasks in a Taskflow\n");
 
-    let token    = PreemptiveCancellationToken::new();
+    let token = PreemptiveCancellationToken::new();
     let finished = Arc::new(AtomicUsize::new(0));
     let cancelled_count = Arc::new(AtomicUsize::new(0));
 
@@ -157,8 +166,8 @@ fn demo_parallel_tasks_with_shared_token() {
     let mut taskflow = Taskflow::new();
 
     for task_id in 0..6 {
-        let t    = token.clone();
-        let fin  = finished.clone();
+        let t = token.clone();
+        let fin = finished.clone();
         let canc = cancelled_count.clone();
 
         taskflow.emplace(move || {
@@ -177,8 +186,14 @@ fn demo_parallel_tasks_with_shared_token() {
 
     executor.run(&taskflow).wait();
 
-    println!("   Tasks finished (within budget): {}", finished.load(Ordering::Relaxed));
-    println!("   Tasks cancelled (exceeded budget): {}", cancelled_count.load(Ordering::Relaxed));
+    println!(
+        "   Tasks finished (within budget): {}",
+        finished.load(Ordering::Relaxed)
+    );
+    println!(
+        "   Tasks cancelled (exceeded budget): {}",
+        cancelled_count.load(Ordering::Relaxed)
+    );
     println!("   ✓ Shared token coordinated cancellation across all workers");
 }
 
@@ -205,7 +220,11 @@ fn demo_reset_and_reuse() {
             }
         });
         handle.join().unwrap();
-        println!("   Run {}: {} steps before cancellation", run, steps.load(Ordering::Relaxed));
+        println!(
+            "   Run {}: {} steps before cancellation",
+            run,
+            steps.load(Ordering::Relaxed)
+        );
     }
     println!("   ✓ Token successfully reused 3 times");
 }

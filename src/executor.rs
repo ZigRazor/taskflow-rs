@@ -1,12 +1,12 @@
-use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
-use std::thread;
-use std::collections::{HashMap, VecDeque};
-use crate::taskflow::Taskflow;
-use crate::task::{TaskWork, TaskId, TaskNode};
+use crate::condition::BranchId;
 use crate::future::TaskflowFuture;
 use crate::subflow::Subflow;
-use crate::condition::BranchId;
+use crate::task::{TaskId, TaskNode, TaskWork};
+use crate::taskflow::Taskflow;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
 
 /// Executor - Thread pool for executing taskflows
 pub struct Executor {
@@ -22,17 +22,15 @@ impl Executor {
             num_workers
         };
 
-        Self {
-            num_workers,
-        }
+        Self { num_workers }
     }
-    
+
     /// Count all tasks reachable from a set of starting tasks
     fn count_reachable_tasks(graph: &Arc<Mutex<Vec<TaskNode>>>, start_tasks: &[TaskId]) -> usize {
         let graph_guard = graph.lock().unwrap();
         let mut visited = std::collections::HashSet::new();
         let mut to_visit: Vec<TaskId> = start_tasks.to_vec();
-        
+
         while let Some(task_id) = to_visit.pop() {
             if visited.insert(task_id) {
                 // Find this task's successors
@@ -45,7 +43,7 @@ impl Executor {
                 }
             }
         }
-        
+
         visited.len()
     }
 
@@ -58,20 +56,20 @@ impl Executor {
         let shutdown = Arc::new(AtomicBool::new(false));
         let tasks_remaining = Arc::new(AtomicUsize::new(0));
         let dep_count = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Build dependency count map and enqueue initial tasks
         {
             let graph_guard = graph.lock().unwrap();
             let mut dep_map = dep_count.lock().unwrap();
             let mut queue_guard = queue.lock().unwrap();
-            
+
             for node in graph_guard.iter() {
                 dep_map.insert(node.id, AtomicUsize::new(node.dependents.len()));
             }
-            
+
             let total = graph_guard.len();
             tasks_remaining.store(total, Ordering::Release);
-            
+
             // Find initial tasks (no dependencies)
             for node in graph_guard.iter() {
                 if node.dependents.is_empty() {
@@ -111,20 +109,20 @@ impl Executor {
 
         TaskflowFuture::new(handles, shutdown)
     }
-    
+
     /// Run a taskflow N times sequentially
-    /// 
+    ///
     /// **Note**: Creates a new taskflow for each iteration using the provided factory function.
     /// This is necessary because task closures (FnOnce) can only execute once.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use taskflow_rs::{Executor, Taskflow};
     /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-    /// 
+    ///
     /// let mut executor = Executor::new(4);
     /// let counter = Arc::new(AtomicUsize::new(0));
-    /// 
+    ///
     /// executor.run_n(5, || {
     ///     let mut taskflow = Taskflow::new();
     ///     let c = counter.clone();
@@ -134,13 +132,13 @@ impl Executor {
     ///     });
     ///     taskflow
     /// }).wait();
-    /// 
+    ///
     /// assert_eq!(counter.load(Ordering::Relaxed), 5);
     /// ```
     /// Run N instances of a taskflow sequentially
-    /// 
+    ///
     /// Creates N taskflows using the factory and runs them one after another.
-    /// 
+    ///
     /// # Example
     /// ```
     /// let mut executor = Executor::new(4);
@@ -157,18 +155,18 @@ impl Executor {
         if n == 0 {
             return self.run(&factory());
         }
-        
+
         // Run n-1 times and wait
-        for _ in 0..n-1 {
+        for _ in 0..n - 1 {
             let taskflow = factory();
             self.run(&taskflow).wait();
         }
-        
+
         // Return the future for the last run
         let taskflow = factory();
         self.run(&taskflow)
     }
-    
+
     /// Run N instances of a taskflow concurrently
     ///
     /// Creates N taskflows and runs them in parallel.
@@ -189,55 +187,55 @@ impl Executor {
     ///     taskflow
     /// }).wait();
     /// ```
-   pub fn run_n<F>(&mut self, n: usize, factory: F) -> TaskflowFuture
+    pub fn run_n<F>(&mut self, n: usize, factory: F) -> TaskflowFuture
     where
         F: Fn() -> Taskflow + Send + Sync + 'static,
     {
         if n == 0 {
             return self.run(&factory());
         }
-        
+
         if n == 1 {
             return self.run(&factory());
         }
-        
+
         let factory = Arc::new(factory);
         let num_workers = self.num_workers;
         let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        
+
         // Spawn threads to run instances in parallel
         let mut handles = Vec::new();
-        
+
         for _ in 0..n {
             let factory = factory.clone();
-            
+
             let handle = std::thread::spawn(move || {
                 // Create a new executor for this instance
                 let mut executor = Executor::new(num_workers);
                 let taskflow = factory();
                 executor.run(&taskflow).wait();
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Return a TaskflowFuture that will wait for all threads
         TaskflowFuture::new(handles, shutdown)
     }
 
     /// Run a taskflow repeatedly until a predicate returns true
-    /// 
+    ///
     /// Creates a new taskflow for each iteration using the provided factory function.
     /// The predicate is checked after each execution.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use taskflow_rs::{Executor, Taskflow};
     /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-    /// 
+    ///
     /// let mut executor = Executor::new(4);
     /// let sum = Arc::new(AtomicUsize::new(0));
-    /// 
+    ///
     /// let s = sum.clone();
     /// executor.run_until(
     ///     || {
@@ -263,40 +261,38 @@ impl Executor {
                 break;
             }
         }
-        
+
         // Return a completed future (last iteration already waited)
         let taskflow = factory();
         self.run(&taskflow)
     }
-    
+
     /// Run multiple taskflows concurrently
-    /// 
+    ///
     /// Executes all taskflows in parallel and returns a vector of futures.
-    /// 
+    ///
     /// # Example
     /// ```
     /// let mut executor = Executor::new(4);
     /// let flow1 = create_taskflow_1();
     /// let flow2 = create_taskflow_2();
     /// let flow3 = create_taskflow_3();
-    /// 
+    ///
     /// let futures = executor.run_many(&[&flow1, &flow2, &flow3]);
-    /// 
+    ///
     /// // Wait for all to complete
     /// for future in futures {
     ///     future.wait();
     /// }
     /// ```
     pub fn run_many(&mut self, taskflows: &[&Taskflow]) -> Vec<TaskflowFuture> {
-        taskflows.iter()
-            .map(|tf| self.run(tf))
-            .collect()
+        taskflows.iter().map(|tf| self.run(tf)).collect()
     }
-    
+
     /// Run multiple taskflows concurrently and wait for all to complete
-    /// 
+    ///
     /// This is a convenience method that runs all taskflows and waits for completion.
-    /// 
+    ///
     /// # Example
     /// ```
     /// let mut executor = Executor::new(4);
@@ -323,17 +319,17 @@ impl Executor {
             // Get next task
             let task_id = {
                 let mut queue_guard = queue.lock().unwrap();
-                
+
                 loop {
                     if let Some(id) = queue_guard.pop_front() {
                         break Some(id);
                     }
-                    
+
                     // Check if we should shutdown
                     if shutdown.load(Ordering::Acquire) {
                         return;
                     }
-                    
+
                     // Check if all tasks are done
                     let remaining = tasks_remaining.load(Ordering::Acquire);
                     if remaining == 0 && queue_guard.is_empty() {
@@ -342,7 +338,7 @@ impl Executor {
                         condvar.notify_all();
                         return;
                     }
-                    
+
                     // Wait for work
                     queue_guard = condvar.wait(queue_guard).unwrap();
                 }
@@ -363,38 +359,39 @@ impl Executor {
                     match work {
                         TaskWork::Static(func) => {
                             func();
-                            None  // Not a conditional task
+                            None // Not a conditional task
                         }
                         TaskWork::Subflow(func) => {
                             let next_id = Arc::new(Mutex::new({
                                 let g = graph.lock().unwrap();
                                 g.len()
                             }));
-                            
+
                             let initial_graph_size = {
                                 let g = graph.lock().unwrap();
                                 g.len()
                             };
-                            
+
                             let mut subflow = Subflow::new(Arc::clone(&graph), next_id);
                             func(&mut subflow);
-                            
+
                             let new_tasks = {
                                 let g = graph.lock().unwrap();
                                 g.len() - initial_graph_size
                             };
-                            
+
                             if new_tasks > 0 {
                                 tasks_remaining.fetch_add(new_tasks, Ordering::Release);
-                                
+
                                 let mut dep_map = dep_count.lock().unwrap();
                                 let graph_guard = graph.lock().unwrap();
                                 let mut queue_guard = queue.lock().unwrap();
-                                
+
                                 for i in initial_graph_size..(initial_graph_size + new_tasks) {
                                     let node = &graph_guard[i];
-                                    dep_map.insert(node.id, AtomicUsize::new(node.dependents.len()));
-                                    
+                                    dep_map
+                                        .insert(node.id, AtomicUsize::new(node.dependents.len()));
+
                                     if node.dependents.is_empty() {
                                         queue_guard.push_back(node.id);
                                     }
@@ -402,11 +399,11 @@ impl Executor {
                                 drop(queue_guard);
                                 condvar.notify_all();
                             }
-                            None  // Not a conditional task
+                            None // Not a conditional task
                         }
                         TaskWork::Condition(func) => {
                             let branch_result = func();
-                            Some(branch_result)  // Return which branch was taken
+                            Some(branch_result) // Return which branch was taken
                         }
                         #[cfg(feature = "async")]
                         TaskWork::Async(_) => {
@@ -426,22 +423,23 @@ impl Executor {
                     let branches_map = conditional_branches.lock().unwrap();
                     if let Some(task_branches) = branches_map.get(&task_id) {
                         let branch_id = BranchId(branch);
-                        
+
                         // Count how many tasks are in branches that were NOT selected
                         // These tasks will never execute, so we need to decrement tasks_remaining for them
                         let mut unreachable_count = 0;
                         for (other_branch_id, other_successors) in task_branches.iter() {
                             if *other_branch_id != branch_id {
                                 // This branch was not selected - count its tasks as unreachable
-                                unreachable_count += Self::count_reachable_tasks(&graph, other_successors);
+                                unreachable_count +=
+                                    Self::count_reachable_tasks(&graph, other_successors);
                             }
                         }
-                        
+
                         // Decrement tasks_remaining for unreachable tasks
                         if unreachable_count > 0 {
                             tasks_remaining.fetch_sub(unreachable_count, Ordering::Release);
                         }
-                        
+
                         if let Some(branch_successors) = task_branches.get(&branch_id) {
                             // Use the specific branch successors
                             branch_successors.clone()
@@ -461,7 +459,7 @@ impl Executor {
                 // Update successor dependencies and enqueue ready tasks
                 let dep_map = dep_count.lock().unwrap();
                 let mut ready_tasks = Vec::new();
-                
+
                 for succ_id in successors_to_activate {
                     if let Some(count) = dep_map.get(&succ_id) {
                         let prev = count.fetch_sub(1, Ordering::AcqRel);

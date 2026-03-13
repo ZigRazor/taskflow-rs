@@ -31,7 +31,7 @@ impl ConditionalHandle {
             branches: HashMap::new(),
         }
     }
-    
+
     /// Add a successor for a specific branch
     pub fn branch(&mut self, branch_id: impl Into<BranchId>, successor: &TaskHandle) -> &mut Self {
         let branch_id = branch_id.into();
@@ -41,9 +41,13 @@ impl ConditionalHandle {
             .push(successor.clone());
         self
     }
-    
+
     /// Add multiple successors for a specific branch
-    pub fn branch_many(&mut self, branch_id: impl Into<BranchId>, successors: &[TaskHandle]) -> &mut Self {
+    pub fn branch_many(
+        &mut self,
+        branch_id: impl Into<BranchId>,
+        successors: &[TaskHandle],
+    ) -> &mut Self {
         let branch_id = branch_id.into();
         self.branches
             .entry(branch_id)
@@ -51,12 +55,12 @@ impl ConditionalHandle {
             .extend(successors.iter().cloned());
         self
     }
-    
+
     /// Get the underlying task handle
     pub fn task(&self) -> &TaskHandle {
         &self.task
     }
-    
+
     /// Get the task ID
     pub(crate) fn task_id(&self) -> TaskId {
         self.task.id
@@ -82,13 +86,13 @@ impl Loop {
             max_iterations: None,
         }
     }
-    
+
     /// Add a task to the loop body
     pub fn add_body_task(&mut self, task: TaskHandle) -> &mut Self {
         self.body.push(task);
         self
     }
-    
+
     /// Set maximum iterations for safety
     pub fn max_iterations(&mut self, max: usize) -> &mut Self {
         self.max_iterations = Some(max);
@@ -100,20 +104,20 @@ impl Loop {
 mod tests {
     use super::*;
     use crate::Taskflow;
-    
+
     #[test]
     fn test_branch_creation() {
         let mut taskflow = Taskflow::new();
-        
+
         let condition = taskflow.emplace(|| {}).name("condition");
         let mut cond_handle = ConditionalHandle::new(condition);
-        
+
         let task_a = taskflow.emplace(|| {}).name("a");
         let task_b = taskflow.emplace(|| {}).name("b");
-        
+
         cond_handle.branch(0, &task_a);
         cond_handle.branch(1, &task_b);
-        
+
         assert_eq!(cond_handle.branches.len(), 2);
     }
 }

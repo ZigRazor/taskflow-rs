@@ -2,13 +2,9 @@
 //!
 //! Run:  cargo run --example dynamic_priority
 
-use taskflow_rs::{
-    Priority,
-    SharedDynamicScheduler,
-    EscalationPolicy,
-};
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
+use taskflow_rs::{EscalationPolicy, Priority, SharedDynamicScheduler};
 
 fn main() {
     println!("=== Dynamic Priority Adjustment Demo ===\n");
@@ -59,22 +55,40 @@ fn demo_reprioritize_via_handle() {
 
     let sched = SharedDynamicScheduler::new();
 
-    let h_background = sched.push(1, Priority::Low);    // background task
-    let _h_normal    = sched.push(2, Priority::Normal);
+    let h_background = sched.push(1, Priority::Low); // background task
+    let _h_normal = sched.push(2, Priority::Normal);
     let _h_important = sched.push(3, Priority::High);
 
     println!("   Initial queue: 1=Low, 2=Normal, 3=High");
-    println!("   Snapshot: {:?}", sched.snapshot()
-        .iter().map(|(id, p)| (*id, *p)).collect::<Vec<_>>());
+    println!(
+        "   Snapshot: {:?}",
+        sched
+            .snapshot()
+            .iter()
+            .map(|(id, p)| (*id, *p))
+            .collect::<Vec<_>>()
+    );
 
     // Simulate user action: task 1 just became time-critical.
     println!("\n   >>> Escalating task 1: Low → Critical via handle");
     let changed = h_background.reprioritize(Priority::Critical);
-    assert!(changed, "reprioritize should return true when task is queued");
+    assert!(
+        changed,
+        "reprioritize should return true when task is queued"
+    );
 
-    println!("   New priority of task 1: {:?}", h_background.current_priority());
-    println!("   Updated snapshot: {:?}", sched.snapshot()
-        .iter().map(|(id, p)| (*id, *p)).collect::<Vec<_>>());
+    println!(
+        "   New priority of task 1: {:?}",
+        h_background.current_priority()
+    );
+    println!(
+        "   Updated snapshot: {:?}",
+        sched
+            .snapshot()
+            .iter()
+            .map(|(id, p)| (*id, *p))
+            .collect::<Vec<_>>()
+    );
 
     print!("   Pop order: ");
     while let Some(id) = sched.pop() {
@@ -96,9 +110,9 @@ fn demo_fifo_within_equal_priority() {
 
     // Reprioritize scenario with a known handle.
     let sched2 = SharedDynamicScheduler::new();
-    let h_a = sched2.push(1usize, Priority::Normal);  // seq=0
+    let h_a = sched2.push(1usize, Priority::Normal); // seq=0
     let _h_b = sched2.push(2usize, Priority::Normal); // seq=1
-    // Elevate task 1 to High – its seq=0 stays, so it beats future High tasks.
+                                                      // Elevate task 1 to High – its seq=0 stays, so it beats future High tasks.
     h_a.reprioritize(Priority::High);
     sched2.push(3usize, Priority::High); // seq=2
 
@@ -131,14 +145,27 @@ fn demo_escalation_policy_anti_starvation() {
         /* normal_age_ticks */ 2,
     );
 
-    println!("   Before escalation: {:?}",
-        sched.snapshot().iter().map(|(id, p)| (*id, *p)).collect::<Vec<_>>());
+    println!(
+        "   Before escalation: {:?}",
+        sched
+            .snapshot()
+            .iter()
+            .map(|(id, p)| (*id, *p))
+            .collect::<Vec<_>>()
+    );
 
     // Simulate scheduler ticks (in production these would be loop iterations).
     for tick in 1..=3 {
         policy.tick();
-        println!("   After tick {}: {:?}", tick,
-            sched.snapshot().iter().map(|(id, p)| (*id, *p)).collect::<Vec<_>>());
+        println!(
+            "   After tick {}: {:?}",
+            tick,
+            sched
+                .snapshot()
+                .iter()
+                .map(|(id, p)| (*id, *p))
+                .collect::<Vec<_>>()
+        );
     }
 
     println!("   ✓ Low-priority tasks escalated to prevent starvation");
@@ -151,12 +178,18 @@ fn demo_cancel_queued_task() {
 
     let sched = SharedDynamicScheduler::new();
     let h_unwanted = sched.push(99, Priority::High);
-    let _          = sched.push(1,  Priority::Normal);
-    let _          = sched.push(2,  Priority::Normal);
+    let _ = sched.push(1, Priority::Normal);
+    let _ = sched.push(2, Priority::Normal);
 
     println!("   Queue length before cancel: {}", sched.len());
-    assert!(h_unwanted.cancel(), "cancel should return true when task is queued");
-    assert!(!h_unwanted.cancel(), "second cancel should return false (already gone)");
+    assert!(
+        h_unwanted.cancel(),
+        "cancel should return true when task is queued"
+    );
+    assert!(
+        !h_unwanted.cancel(),
+        "second cancel should return false (already gone)"
+    );
     println!("   Queue length after cancel:  {}", sched.len());
     assert!(!h_unwanted.is_pending());
 
@@ -206,8 +239,11 @@ fn demo_concurrent_reprioritize() {
         popped.push(id);
     }
     popped.sort();
-    assert_eq!(popped, (0usize..20).collect::<Vec<_>>(),
-        "all 20 tasks must be present after concurrent reprioritization");
+    assert_eq!(
+        popped,
+        (0usize..20).collect::<Vec<_>>(),
+        "all 20 tasks must be present after concurrent reprioritization"
+    );
 
     println!("   All 20 tasks drained without data races.");
     println!("   ✓ Concurrent reprioritization is safe and lossless");

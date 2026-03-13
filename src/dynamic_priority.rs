@@ -71,20 +71,20 @@ pub(crate) struct SeqNum(u64);
 /// `SharedDynamicScheduler` for concurrent use.
 pub struct DynamicPriorityScheduler {
     /// Ordered view: (rev_priority, seq_num) → task_id
-    index:   BTreeMap<(RevPriority, SeqNum), TaskId>,
+    index: BTreeMap<(RevPriority, SeqNum), TaskId>,
     /// Reverse map: task_id → (rev_priority, seq_num) for O(1) key lookup.
     reverse: HashMap<TaskId, (RevPriority, SeqNum)>,
     /// Monotonic counter.
-    seq:     u64,
+    seq: u64,
 }
 
 impl DynamicPriorityScheduler {
     /// Create an empty scheduler.
     pub fn new() -> Self {
         Self {
-            index:   BTreeMap::new(),
+            index: BTreeMap::new(),
             reverse: HashMap::new(),
-            seq:     0,
+            seq: 0,
         }
     }
 
@@ -95,7 +95,7 @@ impl DynamicPriorityScheduler {
 
     /// Internal push that returns the assigned SeqNum (used by SharedDynamicScheduler).
     pub(crate) fn push_inner(&mut self, task_id: TaskId, priority: Priority) -> SeqNum {
-        let rp  = RevPriority::new(priority);
+        let rp = RevPriority::new(priority);
         let seq = SeqNum(self.seq);
         self.seq += 1;
         self.index.insert((rp, seq), task_id);
@@ -114,7 +114,10 @@ impl DynamicPriorityScheduler {
 
     /// Peek at the next task without removing it.
     pub fn peek(&self) -> Option<(TaskId, Priority)> {
-        self.index.iter().next().map(|((rp, _), &tid)| (tid, rp.to_priority()))
+        self.index
+            .iter()
+            .next()
+            .map(|((rp, _), &tid)| (tid, rp.to_priority()))
     }
 
     /// Change the priority of a queued task.
@@ -127,7 +130,7 @@ impl DynamicPriorityScheduler {
     pub fn reprioritize(&mut self, task_id: TaskId, new_priority: Priority) -> bool {
         let (old_rp, old_seq) = match self.reverse.remove(&task_id) {
             Some(v) => v,
-            None    => return false,
+            None => return false,
         };
         // Remove old entry from the ordered index.
         self.index.remove(&(old_rp, old_seq));
@@ -187,7 +190,9 @@ impl DynamicPriorityScheduler {
 }
 
 impl Default for DynamicPriorityScheduler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Thread-safe wrapper ──────────────────────────────────────────────────────
@@ -258,7 +263,9 @@ impl SharedDynamicScheduler {
 }
 
 impl Default for SharedDynamicScheduler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Priority handle ──────────────────────────────────────────────────────────
@@ -281,8 +288,8 @@ impl Default for SharedDynamicScheduler {
 /// ```
 #[derive(Debug, Clone)]
 pub struct PriorityHandle {
-    pub task_id:   TaskId,
-    seq:       SeqNum,
+    pub task_id: TaskId,
+    seq: SeqNum,
     scheduler: Weak<Mutex<DynamicPriorityScheduler>>,
 }
 
@@ -334,14 +341,14 @@ impl PriorityHandle {
 /// Attach to a `SharedDynamicScheduler` and call `tick()` periodically
 /// (e.g., every scheduler loop iteration).
 pub struct EscalationPolicy {
-    scheduler:    SharedDynamicScheduler,
+    scheduler: SharedDynamicScheduler,
     /// How often to escalate (in `tick()` calls).
     tick_interval: u64,
     /// Current tick counter.
-    tick_count:    u64,
+    tick_count: u64,
     /// Age at which Low → Normal (reserved for future per-age escalation).
     #[allow(dead_code)]
-    low_age_ticks:    u64,
+    low_age_ticks: u64,
     /// Age at which Normal → High (reserved for future per-age escalation).
     #[allow(dead_code)]
     normal_age_ticks: u64,
@@ -354,9 +361,9 @@ impl EscalationPolicy {
     /// - `low_age_ticks`: ticks before a `Low` task is bumped to `Normal`.
     /// - `normal_age_ticks`: ticks before a `Normal` task is bumped to `High`.
     pub fn new(
-        scheduler:        SharedDynamicScheduler,
-        tick_interval:    u64,
-        low_age_ticks:    u64,
+        scheduler: SharedDynamicScheduler,
+        tick_interval: u64,
+        low_age_ticks: u64,
         normal_age_ticks: u64,
     ) -> Self {
         Self {
@@ -383,9 +390,9 @@ impl EscalationPolicy {
         let snapshot = self.scheduler.snapshot();
         for (task_id, priority) in snapshot {
             let new_priority = match priority {
-                Priority::Low    => Priority::Normal,
+                Priority::Low => Priority::Normal,
                 Priority::Normal => Priority::High,
-                _                => continue, // High / Critical unchanged
+                _ => continue, // High / Critical unchanged
             };
             self.scheduler.reprioritize(task_id, new_priority);
         }
@@ -481,9 +488,9 @@ mod tests {
     fn reprioritize_preserves_fifo_within_new_priority() {
         let mut sched = DynamicPriorityScheduler::new();
         // Push two Normal tasks, then elevate the older one to High.
-        sched.push(1, Priority::Normal);   // seq=0
-        sched.push(2, Priority::Normal);   // seq=1
-        sched.push(3, Priority::High);     // seq=2
+        sched.push(1, Priority::Normal); // seq=0
+        sched.push(2, Priority::Normal); // seq=1
+        sched.push(3, Priority::High); // seq=2
 
         // Elevate task 1 (seq=0) to High → should come before task 3 (seq=2).
         assert!(sched.reprioritize(1, Priority::High));

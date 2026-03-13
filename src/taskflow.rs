@@ -1,7 +1,7 @@
-use std::sync::{Arc, Mutex};
-use crate::task::{TaskHandle, TaskNode, TaskWork, TaskId};
-use crate::condition::{ConditionalHandle, BranchId};
+use crate::condition::{BranchId, ConditionalHandle};
+use crate::task::{TaskHandle, TaskId, TaskNode, TaskWork};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Taskflow - A task dependency graph
 pub struct Taskflow {
@@ -71,31 +71,33 @@ impl Taskflow {
         let task = self.emplace_condition(condition);
         ConditionalHandle::new(task)
     }
-    
+
     /// Register conditional branches (called when finalizing a ConditionalHandle)
     pub fn register_branches(&mut self, cond_handle: &ConditionalHandle) {
         let mut branches_map = self.conditional_branches.lock().unwrap();
         let task_id = cond_handle.task_id();
-        
+
         let mut branch_successors = HashMap::new();
         for (branch_id, successors) in &cond_handle.branches {
             let successor_ids: Vec<TaskId> = successors.iter().map(|h| h.id).collect();
             branch_successors.insert(*branch_id, successor_ids);
-            
+
             // Set up dependencies in the graph
             for successor in successors {
                 successor.succeed(&cond_handle.task);
             }
         }
-        
+
         branches_map.insert(task_id, branch_successors);
     }
-    
+
     /// Get conditional branches (for executor)
-    pub(crate) fn get_conditional_branches(&self) -> Arc<Mutex<HashMap<TaskId, HashMap<BranchId, Vec<TaskId>>>>> {
+    pub(crate) fn get_conditional_branches(
+        &self,
+    ) -> Arc<Mutex<HashMap<TaskId, HashMap<BranchId, Vec<TaskId>>>>> {
         Arc::clone(&self.conditional_branches)
     }
-    
+
     /// Create an async task (requires 'async' feature)
     #[cfg(feature = "async")]
     pub fn emplace_async<F, Fut>(&mut self, work: F) -> TaskHandle
@@ -106,9 +108,12 @@ impl Taskflow {
         let id = self.next_id;
         self.next_id += 1;
 
-        let work_boxed: Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + 'static> = 
-            Box::new(move || Box::pin(work()));
-        
+        let work_boxed: Box<
+            dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                + Send
+                + 'static,
+        > = Box::new(move || Box::pin(work()));
+
         let node = TaskNode::new(id, TaskWork::Async(work_boxed));
         self.graph.lock().unwrap().push(node);
 
@@ -119,7 +124,7 @@ impl Taskflow {
     pub(crate) fn get_graph(&self) -> Arc<Mutex<Vec<TaskNode>>> {
         Arc::clone(&self.graph)
     }
-    
+
     /// Get next available task ID and increment (for composition)
     #[allow(dead_code)]
     pub(crate) fn next_id(&mut self) -> TaskId {
@@ -170,11 +175,11 @@ mod tests {
         let mut tf = Taskflow::new();
         let a = tf.emplace(|| println!("A")).name("A");
         let b = tf.emplace(|| println!("B")).name("B");
-        
+
         a.precede(&b);
-        
+
         assert_eq!(tf.size(), 2);
-        
+
         let dot = tf.dump();
         assert!(dot.contains("A"));
         assert!(dot.contains("B"));

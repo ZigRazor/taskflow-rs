@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "async")]
 use std::future::Future;
@@ -66,12 +66,12 @@ impl TaskHandle {
     /// Make this task precede another task (this -> other)
     pub fn precede(&self, other: &TaskHandle) {
         let mut graph = self.graph.lock().unwrap();
-        
+
         // Add edge from self to other
         if let Some(node) = graph.iter_mut().find(|n| n.id == self.id) {
             node.successors.insert(other.id);
         }
-        
+
         // Update other's dependents and increment num_dependents
         if let Some(node) = graph.iter_mut().find(|n| n.id == other.id) {
             if node.dependents.insert(self.id) {
@@ -85,7 +85,7 @@ impl TaskHandle {
     pub fn succeed(&self, other: &TaskHandle) {
         other.precede(self);
     }
-    
+
     /// Get the task ID
     pub fn id(&self) -> TaskId {
         self.id

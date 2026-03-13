@@ -23,8 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::gpu_backend::{
-    BackendBuffer, BackendKind, BackendStream, ComputeBackend,
-    DeviceBuffer, DeviceStream, GpuError,
+    BackendBuffer, BackendKind, BackendStream, ComputeBackend, DeviceBuffer, DeviceStream, GpuError,
 };
 
 // ---------------------------------------------------------------------------
@@ -43,7 +42,9 @@ unsafe impl Send for HipStream {}
 unsafe impl Sync for HipStream {}
 
 impl HipStream {
-    pub fn null() -> Self { HipStream(std::ptr::null_mut()) }
+    pub fn null() -> Self {
+        HipStream(std::ptr::null_mut())
+    }
 }
 
 /// HIP error code (hipError_t)
@@ -85,7 +86,11 @@ fn rocm_err(code: HipError, op: &str) -> GpuError {
 }
 
 fn check(code: HipError, op: &str) -> Result<(), GpuError> {
-    if code == HIP_SUCCESS { Ok(()) } else { Err(rocm_err(code, op)) }
+    if code == HIP_SUCCESS {
+        Ok(())
+    } else {
+        Err(rocm_err(code, op))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +99,7 @@ fn check(code: HipError, op: &str) -> Result<(), GpuError> {
 
 #[derive(Debug)]
 pub struct RocmBuffer {
-    ptr:        *mut c_void,
+    ptr: *mut c_void,
     size_bytes: usize,
 }
 
@@ -107,22 +112,33 @@ impl RocmBuffer {
         let mut ptr: *mut c_void = std::ptr::null_mut();
         let code = unsafe { hipMalloc(&mut ptr as *mut *mut _, size) };
         check(code, "hipMalloc")?;
-        Ok(Self { ptr, size_bytes: size })
+        Ok(Self {
+            ptr,
+            size_bytes: size,
+        })
     }
 }
 
 impl Drop for RocmBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            unsafe { hipFree(self.ptr); }
+            unsafe {
+                hipFree(self.ptr);
+            }
         }
     }
 }
 
 impl BackendBuffer for RocmBuffer {
-    fn size_bytes(&self) -> usize { self.size_bytes }
-    fn device_ptr(&self) -> *const c_void { self.ptr }
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn size_bytes(&self) -> usize {
+        self.size_bytes
+    }
+    fn device_ptr(&self) -> *const c_void {
+        self.ptr
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +148,7 @@ impl BackendBuffer for RocmBuffer {
 #[derive(Debug)]
 pub struct RocmStream {
     pub(crate) stream: HipStream,
-    pub(crate) id:     u64,
+    pub(crate) id: u64,
 }
 
 unsafe impl Send for RocmStream {}
@@ -150,20 +166,26 @@ impl RocmStream {
 impl Drop for RocmStream {
     fn drop(&mut self) {
         if !self.stream.0.is_null() {
-            unsafe { hipStreamDestroy(self.stream); }
+            unsafe {
+                hipStreamDestroy(self.stream);
+            }
         }
     }
 }
 
 impl BackendStream for RocmStream {
-    fn id(&self) -> u64 { self.id }
+    fn id(&self) -> u64 {
+        self.id
+    }
 
     fn synchronize(&self) -> Result<(), GpuError> {
         let code = unsafe { hipStreamSynchronize(self.stream) };
         check(code, "hipStreamSynchronize")
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,8 +194,8 @@ impl BackendStream for RocmStream {
 
 #[derive(Debug)]
 pub struct RocmBackend {
-    device_id:      usize,
-    name:           String,
+    device_id: usize,
+    name: String,
     next_stream_id: AtomicU64,
 }
 
@@ -186,7 +208,8 @@ impl RocmBackend {
 
         if device_id >= count as usize {
             return Err(GpuError::rocm(format!(
-                "ROCm device_id {} out of range ({} devices)", device_id, count
+                "ROCm device_id {} out of range ({} devices)",
+                device_id, count
             )));
         }
 
@@ -196,13 +219,12 @@ impl RocmBackend {
 
         // Query device name
         let mut name_buf = vec![0u8; 256];
-        let code = unsafe {
-            hipDeviceGetName(name_buf.as_mut_ptr(), 256, device_id as i32)
-        };
+        let code = unsafe { hipDeviceGetName(name_buf.as_mut_ptr(), 256, device_id as i32) };
         check(code, "hipDeviceGetName")?;
         let name = String::from_utf8_lossy(
-            &name_buf[..name_buf.iter().position(|&b| b == 0).unwrap_or(256)]
-        ).into_owned();
+            &name_buf[..name_buf.iter().position(|&b| b == 0).unwrap_or(256)],
+        )
+        .into_owned();
 
         log::info!("ROCm backend initialised: {} (device {})", name, device_id);
 
@@ -220,9 +242,15 @@ impl RocmBackend {
 }
 
 impl ComputeBackend for RocmBackend {
-    fn kind(&self)      -> BackendKind { BackendKind::Rocm }
-    fn name(&self)      -> &str        { &self.name }
-    fn device_id(&self) -> usize       { self.device_id }
+    fn kind(&self) -> BackendKind {
+        BackendKind::Rocm
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn device_id(&self) -> usize {
+        self.device_id
+    }
 
     // ---- Memory -----------------------------------------------------------
 
@@ -242,9 +270,7 @@ impl ComputeBackend for RocmBackend {
     ) -> Result<(), GpuError> {
         self.set_device()?;
         let dst_buf = dst_as_rocm(dst)?;
-        let code = unsafe {
-            hipMemcpy(dst_buf.ptr, src, src_bytes, HIP_MEMCPY_HOST_TO_DEVICE)
-        };
+        let code = unsafe { hipMemcpy(dst_buf.ptr, src, src_bytes, HIP_MEMCPY_HOST_TO_DEVICE) };
         check(code, "hipMemcpy(H2D)")
     }
 
@@ -256,9 +282,7 @@ impl ComputeBackend for RocmBackend {
     ) -> Result<(), GpuError> {
         self.set_device()?;
         let src_buf = dst_as_rocm(src)?;
-        let code = unsafe {
-            hipMemcpy(dst, src_buf.ptr, dst_bytes, HIP_MEMCPY_DEVICE_TO_HOST)
-        };
+        let code = unsafe { hipMemcpy(dst, src_buf.ptr, dst_bytes, HIP_MEMCPY_DEVICE_TO_HOST) };
         check(code, "hipMemcpy(D2H)")
     }
 
@@ -271,8 +295,8 @@ impl ComputeBackend for RocmBackend {
         dst: &DeviceBuffer,
         stream: &DeviceStream,
     ) -> Result<(), GpuError> {
-        let dst_buf     = dst_as_rocm(dst)?;
-        let hip_stream  = stream_as_rocm(stream)?;
+        let dst_buf = dst_as_rocm(dst)?;
+        let hip_stream = stream_as_rocm(stream)?;
 
         let code = hipMemcpyAsync(
             dst_buf.ptr,
@@ -291,8 +315,8 @@ impl ComputeBackend for RocmBackend {
         dst_bytes: usize,
         stream: &DeviceStream,
     ) -> Result<(), GpuError> {
-        let src_buf     = dst_as_rocm(src)?;
-        let hip_stream  = stream_as_rocm(stream)?;
+        let src_buf = dst_as_rocm(src)?;
+        let hip_stream = stream_as_rocm(stream)?;
 
         let code = hipMemcpyAsync(
             dst,
@@ -308,7 +332,7 @@ impl ComputeBackend for RocmBackend {
 
     fn create_stream(&self) -> Result<DeviceStream, GpuError> {
         self.set_device()?;
-        let id     = self.next_stream_id.fetch_add(1, Ordering::Relaxed);
+        let id = self.next_stream_id.fetch_add(1, Ordering::Relaxed);
         let stream = RocmStream::create(id)?;
         Ok(Arc::new(stream))
     }
@@ -325,7 +349,7 @@ impl ComputeBackend for RocmBackend {
 
     fn memory_info(&self) -> Result<(usize, usize), GpuError> {
         self.set_device()?;
-        let mut free:  usize = 0;
+        let mut free: usize = 0;
         let mut total: usize = 0;
         let code = unsafe { hipMemGetInfo(&mut free, &mut total) };
         check(code, "hipMemGetInfo")?;
@@ -344,7 +368,8 @@ fn dst_as_rocm(buf: &DeviceBuffer) -> Result<&RocmBuffer, GpuError> {
 }
 
 fn stream_as_rocm(stream: &DeviceStream) -> Result<HipStream, GpuError> {
-    stream.as_any()
+    stream
+        .as_any()
         .downcast_ref::<RocmStream>()
         .map(|s| s.stream)
         .ok_or_else(|| GpuError::rocm("DeviceStream is not a ROCm stream"))

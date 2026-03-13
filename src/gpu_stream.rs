@@ -14,8 +14,8 @@
 // ============================================================================
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::gpu_backend::{ComputeBackend, DeviceStream, GpuError};
 
@@ -36,7 +36,10 @@ pub struct GpuStream {
 
 impl GpuStream {
     /// Create a new stream on the given backend.
-    pub fn new(backend: &Arc<dyn ComputeBackend>, label: impl Into<String>) -> Result<Self, GpuError> {
+    pub fn new(
+        backend: &Arc<dyn ComputeBackend>,
+        label: impl Into<String>,
+    ) -> Result<Self, GpuError> {
         let inner = backend.create_stream()?;
         Ok(Self {
             inner,
@@ -45,7 +48,9 @@ impl GpuStream {
     }
 
     /// Opaque stream ID (for logging / tracing).
-    pub fn id(&self) -> u64 { self.inner.id() }
+    pub fn id(&self) -> u64 {
+        self.inner.id()
+    }
 
     /// Block until all previously enqueued work on this stream completes.
     pub fn synchronize(&self) -> Result<(), GpuError> {
@@ -53,7 +58,9 @@ impl GpuStream {
     }
 
     /// Label assigned at creation time.
-    pub fn label(&self) -> &str { &self.label }
+    pub fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 impl fmt::Debug for GpuStream {
@@ -81,8 +88,8 @@ impl fmt::Debug for GpuStream {
 /// }                                   // stream returned to pool on drop
 /// ```
 pub struct StreamPool {
-    streams:    Vec<Arc<StreamSlot>>,
-    strategy:   StreamAssignment,
+    streams: Vec<Arc<StreamSlot>>,
+    strategy: StreamAssignment,
     next_robin: AtomicUsize,
 }
 
@@ -96,13 +103,18 @@ pub enum StreamAssignment {
 }
 
 struct StreamSlot {
-    stream:      GpuStream,
+    stream: GpuStream,
     pending_ops: AtomicU64,
 }
 
 impl fmt::Debug for StreamPool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StreamPool({} streams, {:?})", self.streams.len(), self.strategy)
+        write!(
+            f,
+            "StreamPool({} streams, {:?})",
+            self.streams.len(),
+            self.strategy
+        )
     }
 }
 
@@ -111,12 +123,15 @@ impl StreamPool {
     ///
     /// Streams are labelled "pool-{i}" by default.
     pub fn new(
-        backend:  &Arc<dyn ComputeBackend>,
-        count:    usize,
+        backend: &Arc<dyn ComputeBackend>,
+        count: usize,
         strategy: StreamAssignment,
     ) -> Result<Self, GpuError> {
         if count == 0 {
-            return Err(GpuError::new(backend.kind(), "StreamPool count must be > 0"));
+            return Err(GpuError::new(
+                backend.kind(),
+                "StreamPool count must be > 0",
+            ));
         }
 
         let mut streams = Vec::with_capacity(count);
@@ -137,8 +152,12 @@ impl StreamPool {
     }
 
     /// Number of streams in the pool.
-    pub fn len(&self) -> usize { self.streams.len() }
-    pub fn is_empty(&self) -> bool { self.streams.is_empty() }
+    pub fn len(&self) -> usize {
+        self.streams.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.streams.is_empty()
+    }
 
     /// Acquire a stream from the pool according to the assignment strategy.
     ///
@@ -161,7 +180,10 @@ impl StreamPool {
         };
 
         slot.pending_ops.fetch_add(1, Ordering::Relaxed);
-        Ok(StreamGuard { slot, _marker: std::marker::PhantomData })
+        Ok(StreamGuard {
+            slot,
+            _marker: std::marker::PhantomData,
+        })
     }
 
     /// Synchronise *all* streams in the pool.
@@ -193,13 +215,19 @@ pub struct StreamGuard<'pool> {
 
 impl<'pool> StreamGuard<'pool> {
     /// The borrowed stream.
-    pub fn stream(&self) -> &GpuStream { &self.slot.stream }
+    pub fn stream(&self) -> &GpuStream {
+        &self.slot.stream
+    }
 
     /// Record that an additional operation was enqueued on this stream.
-    pub fn record_op(&self) { self.slot.pending_ops.fetch_add(1, Ordering::Relaxed); }
+    pub fn record_op(&self) {
+        self.slot.pending_ops.fetch_add(1, Ordering::Relaxed);
+    }
 
     /// Current pending-op count (informational).
-    pub fn pending_ops(&self) -> u64 { self.slot.pending_ops.load(Ordering::Relaxed) }
+    pub fn pending_ops(&self) -> u64 {
+        self.slot.pending_ops.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for StreamGuard<'_> {
@@ -232,14 +260,14 @@ impl fmt::Debug for StreamGuard<'_> {
 #[derive(Debug, Clone)]
 pub struct StreamSet {
     streams: Vec<GpuStream>,
-    depth:   usize,
+    depth: usize,
 }
 
 impl StreamSet {
     pub fn new(
         backend: &Arc<dyn ComputeBackend>,
-        depth:   usize,
-        prefix:  &str,
+        depth: usize,
+        prefix: &str,
     ) -> Result<Self, GpuError> {
         let mut streams = Vec::with_capacity(depth);
         for i in 0..depth {
@@ -254,7 +282,9 @@ impl StreamSet {
     }
 
     /// Number of streams in the set.
-    pub fn depth(&self) -> usize { self.depth }
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
 
     /// Synchronise all streams sequentially.
     pub fn synchronize_all(&self) -> Result<(), GpuError> {

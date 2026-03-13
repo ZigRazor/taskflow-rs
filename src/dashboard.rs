@@ -95,11 +95,11 @@ impl MetricSnapshot {
         format!(
             r##"{{"ts":{ts},"completed":{c},"stolen":{s},"steal_rate":{sr:.3},"avg_task_us":{at},"worker_utils":[{u}],"throughput":{tp:.2}}}"##,
             ts = self.timestamp_ms,
-            c  = self.tasks_completed,
-            s  = self.tasks_stolen,
+            c = self.tasks_completed,
+            s = self.tasks_stolen,
             sr = self.steal_rate,
             at = self.avg_task_us,
-            u  = utils,
+            u = utils,
             tp = self.throughput_per_sec,
         )
     }
@@ -134,7 +134,11 @@ impl DashboardServer {
     /// Create a new dashboard server.
     ///
     /// `num_workers` must match the value passed to `PerformanceMetrics::new`.
-    pub fn new(metrics: Arc<PerformanceMetrics>, num_workers: usize, config: DashboardConfig) -> Self {
+    pub fn new(
+        metrics: Arc<PerformanceMetrics>,
+        num_workers: usize,
+        config: DashboardConfig,
+    ) -> Self {
         Self {
             metrics,
             profile: Arc::new(Mutex::new(None)),
@@ -156,9 +160,7 @@ impl DashboardServer {
         let state = Arc::new(SharedState {
             metrics: self.metrics,
             profile: self.profile,
-            history: Arc::new(Mutex::new(VecDeque::with_capacity(
-                self.config.history_len,
-            ))),
+            history: Arc::new(Mutex::new(VecDeque::with_capacity(self.config.history_len))),
             config: self.config.clone(),
             shutdown: Arc::clone(&shutdown),
             start: Instant::now(),
@@ -192,7 +194,9 @@ fn run_server(state: Arc<SharedState>, port: u16, shutdown: Arc<AtomicBool>) {
             return;
         }
     };
-    listener.set_nonblocking(true).expect("set_nonblocking failed");
+    listener
+        .set_nonblocking(true)
+        .expect("set_nonblocking failed");
     eprintln!("[dashboard] listening on http://{}", addr);
 
     {
@@ -288,7 +292,9 @@ fn handle_connection(mut stream: TcpStream, state: Arc<SharedState>) {
 
     let mut header = String::new();
     while let Ok(n) = reader.read_line(&mut header) {
-        if n <= 2 { break; }
+        if n <= 2 {
+            break;
+        }
         header.clear();
     }
 
@@ -300,9 +306,9 @@ fn handle_connection(mut stream: TcpStream, state: Arc<SharedState>) {
 
     match path.as_str() {
         "/" | "/index.html" => serve_html(&mut stream, &state),
-        "/events"           => serve_sse(&mut stream, &state),
-        "/snapshot"         => serve_snapshot(&mut stream, &state),
-        _                   => serve_404(&mut stream),
+        "/events" => serve_sse(&mut stream, &state),
+        "/snapshot" => serve_snapshot(&mut stream, &state),
+        _ => serve_404(&mut stream),
     }
 }
 
@@ -317,7 +323,9 @@ fn serve_html(stream: &mut TcpStream, state: &SharedState) {
 
 fn serve_sse(stream: &mut TcpStream, state: &SharedState) {
     let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
-    if stream.write_all(headers.as_bytes()).is_err() { return; }
+    if stream.write_all(headers.as_bytes()).is_err() {
+        return;
+    }
 
     let interval = Duration::from_millis(state.config.push_interval_ms);
 
@@ -325,7 +333,9 @@ fn serve_sse(stream: &mut TcpStream, state: &SharedState) {
         let hist = state.history.lock().unwrap();
         for snap in hist.iter() {
             let event = format!("data: {}\n\n", snap.to_json());
-            if stream.write_all(event.as_bytes()).is_err() { return; }
+            if stream.write_all(event.as_bytes()).is_err() {
+                return;
+            }
         }
     }
 
@@ -334,7 +344,9 @@ fn serve_sse(stream: &mut TcpStream, state: &SharedState) {
         let snap = { state.history.lock().unwrap().back().cloned() };
         if let Some(snap) = snap {
             let event = format!("data: {}\n\n", snap.to_json());
-            if stream.write_all(event.as_bytes()).is_err() { break; }
+            if stream.write_all(event.as_bytes()).is_err() {
+                break;
+            }
         }
     }
 }
@@ -342,11 +354,14 @@ fn serve_sse(stream: &mut TcpStream, state: &SharedState) {
 fn serve_snapshot(stream: &mut TcpStream, state: &SharedState) {
     let json = {
         let hist = state.history.lock().unwrap();
-        hist.back().map(|s| s.to_json()).unwrap_or_else(|| "{}".to_string())
+        hist.back()
+            .map(|s| s.to_json())
+            .unwrap_or_else(|| "{}".to_string())
     };
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-        json.len(), json
+        json.len(),
+        json
     );
     let _ = stream.write_all(response.as_bytes());
 }

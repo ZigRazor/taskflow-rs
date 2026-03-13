@@ -18,21 +18,29 @@ fn basic_task_graph() {
     let mut executor = Executor::new(4);
     let mut taskflow = Taskflow::new();
 
-    let a = taskflow.emplace(|| {
-        println!("Task A executing");
-    }).name("A");
+    let a = taskflow
+        .emplace(|| {
+            println!("Task A executing");
+        })
+        .name("A");
 
-    let b = taskflow.emplace(|| {
-        println!("Task B executing");
-    }).name("B");
+    let b = taskflow
+        .emplace(|| {
+            println!("Task B executing");
+        })
+        .name("B");
 
-    let c = taskflow.emplace(|| {
-        println!("Task C executing");
-    }).name("C");
+    let c = taskflow
+        .emplace(|| {
+            println!("Task C executing");
+        })
+        .name("C");
 
-    let d = taskflow.emplace(|| {
-        println!("Task D executing");
-    }).name("D");
+    let d = taskflow
+        .emplace(|| {
+            println!("Task D executing");
+        })
+        .name("D");
 
     // A runs before B and C
     a.precede(&b);
@@ -49,23 +57,31 @@ fn diamond_pattern() {
     let mut executor = Executor::new(4);
     let mut taskflow = Taskflow::new();
 
-    let start = taskflow.emplace(|| {
-        println!("Start task");
-    }).name("start");
+    let start = taskflow
+        .emplace(|| {
+            println!("Start task");
+        })
+        .name("start");
 
-    let left = taskflow.emplace(|| {
-        println!("Left branch");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }).name("left");
+    let left = taskflow
+        .emplace(|| {
+            println!("Left branch");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        })
+        .name("left");
 
-    let right = taskflow.emplace(|| {
-        println!("Right branch");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }).name("right");
+    let right = taskflow
+        .emplace(|| {
+            println!("Right branch");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        })
+        .name("right");
 
-    let end = taskflow.emplace(|| {
-        println!("End task");
-    }).name("end");
+    let end = taskflow
+        .emplace(|| {
+            println!("End task");
+        })
+        .name("end");
 
     start.precede(&left);
     start.precede(&right);
@@ -79,32 +95,44 @@ fn subflow_example() {
     let mut executor = Executor::new(4);
     let mut taskflow = Taskflow::new();
 
-    let a = taskflow.emplace(|| {
-        println!("Task A");
-    }).name("A");
+    let a = taskflow
+        .emplace(|| {
+            println!("Task A");
+        })
+        .name("A");
 
-    let b = taskflow.emplace_subflow(|subflow| {
-        println!("Task B - creating subflow");
-        
-        let b1 = subflow.emplace(|| {
-            println!("  Subflow task B1");
-        }).name("B1");
+    let b = taskflow
+        .emplace_subflow(|subflow| {
+            println!("Task B - creating subflow");
 
-        let b2 = subflow.emplace(|| {
-            println!("  Subflow task B2");
-        }).name("B2");
+            let b1 = subflow
+                .emplace(|| {
+                    println!("  Subflow task B1");
+                })
+                .name("B1");
 
-        let b3 = subflow.emplace(|| {
-            println!("  Subflow task B3");
-        }).name("B3");
+            let b2 = subflow
+                .emplace(|| {
+                    println!("  Subflow task B2");
+                })
+                .name("B2");
 
-        b1.precede(&b3);
-        b2.precede(&b3);
-    }).name("B");
+            let b3 = subflow
+                .emplace(|| {
+                    println!("  Subflow task B3");
+                })
+                .name("B3");
 
-    let c = taskflow.emplace(|| {
-        println!("Task C");
-    }).name("C");
+            b1.precede(&b3);
+            b2.precede(&b3);
+        })
+        .name("B");
+
+    let c = taskflow
+        .emplace(|| {
+            println!("Task C");
+        })
+        .name("C");
 
     a.precede(&b);
     c.succeed(&b);

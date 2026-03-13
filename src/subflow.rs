@@ -1,5 +1,5 @@
+use crate::task::{TaskHandle, TaskId, TaskNode, TaskWork};
 use std::sync::{Arc, Mutex};
-use crate::task::{TaskHandle, TaskNode, TaskWork, TaskId};
 
 #[cfg(feature = "async")]
 use std::future::Future;
@@ -49,9 +49,8 @@ impl Subflow {
             id
         };
 
-        let async_work = Box::new(move || -> Pin<Box<dyn Future<Output = ()> + Send>> {
-            Box::pin(work())
-        });
+        let async_work =
+            Box::new(move || -> Pin<Box<dyn Future<Output = ()> + Send>> { Box::pin(work()) });
 
         let node = TaskNode::new(id, TaskWork::Async(async_work));
         self.graph.lock().unwrap().push(node);

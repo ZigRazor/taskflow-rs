@@ -32,7 +32,12 @@ struct Frame {
 
 impl Frame {
     fn new(name: impl Into<String>, total: u64) -> Self {
-        Frame { name: name.into(), total, self_samples: total, children: Vec::new() }
+        Frame {
+            name: name.into(),
+            total,
+            self_samples: total,
+            children: Vec::new(),
+        }
     }
 
     fn add_child(&mut self, child: Frame) {
@@ -50,7 +55,9 @@ impl Frame {
     }
 
     fn depth(&self) -> usize {
-        if self.children.is_empty() { 1 } else {
+        if self.children.is_empty() {
+            1
+        } else {
             1 + self.children.iter().map(|c| c.depth()).max().unwrap_or(0)
         }
     }
@@ -129,7 +136,15 @@ impl FlamegraphGenerator {
         let mut rects: Vec<RenderRect> = Vec::new();
         let y_base = height - cfg.row_height - 10;
 
-        collect_rects(root, 0, total_samples, y_base, cfg, &mut rects, total_samples);
+        collect_rects(
+            root,
+            0,
+            total_samples,
+            y_base,
+            cfg,
+            &mut rects,
+            total_samples,
+        );
         build_svg(&rects, cfg.width, height, cfg, total_samples)
     }
 }
@@ -156,7 +171,9 @@ fn build_frame_tree_from_profile(profile: &ExecutionProfile) -> Frame {
         };
 
         let worker_us: u64 = tasks.iter().map(|t| t.duration.as_micros() as u64).sum();
-        if worker_us == 0 { continue; }
+        if worker_us == 0 {
+            continue;
+        }
 
         let mut worker_frame = Frame::new(format!("Worker {}", worker_id), worker_us);
 
@@ -166,10 +183,7 @@ fn build_frame_tree_from_profile(profile: &ExecutionProfile) -> Frame {
         for task in sorted {
             let dur_us = task.duration.as_micros() as u64;
             let name = task.name.as_deref().unwrap_or("task");
-            let task_frame = Frame::new(
-                format!("{} [id={}]", name, task.task_id),
-                dur_us,
-            );
+            let task_frame = Frame::new(format!("{} [id={}]", name, task.task_id), dur_us);
             worker_frame.add_child(task_frame);
         }
 
@@ -188,7 +202,9 @@ fn parse_folded(text: &str) -> Frame {
 
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
 
         let (stack_part, count_str) = match line.rsplit_once(|c: char| c.is_whitespace()) {
             Some(pair) => pair,
@@ -209,7 +225,9 @@ fn parse_folded(text: &str) -> Frame {
 }
 
 fn insert_path(node: &mut Frame, path: &[&str], count: u64) {
-    if path.is_empty() { return; }
+    if path.is_empty() {
+        return;
+    }
 
     let head = path[0];
     let tail = &path[1..];
@@ -252,12 +270,16 @@ fn collect_rects(
     rects: &mut Vec<RenderRect>,
     grand_total: u64,
 ) {
-    if grand_total == 0 { return; }
+    if grand_total == 0 {
+        return;
+    }
 
     let x = (sample_offset as f64 / grand_total as f64) * cfg.width as f64;
     let w = (frame.total as f64 / grand_total as f64) * cfg.width as f64;
 
-    if w < cfg.min_width as f64 { return; }
+    if w < cfg.min_width as f64 {
+        return;
+    }
 
     rects.push(RenderRect {
         x,
@@ -270,11 +292,21 @@ fn collect_rects(
         color: frame_color(&frame.name, &cfg.palette),
     });
 
-    if y < cfg.row_height { return; }
+    if y < cfg.row_height {
+        return;
+    }
     let child_y = y - cfg.row_height;
     let mut child_offset = sample_offset;
     for child in &frame.children {
-        collect_rects(child, child_offset, grand_total, child_y, cfg, rects, grand_total);
+        collect_rects(
+            child,
+            child_offset,
+            grand_total,
+            child_y,
+            cfg,
+            rects,
+            grand_total,
+        );
         child_offset += child.total;
     }
 }
@@ -284,18 +316,18 @@ fn collect_rects(
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn frame_color(name: &str, palette: &str) -> String {
-    let hash: u32 = name
-        .bytes()
-        .fold(5381u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let hash: u32 = name.bytes().fold(5381u32, |acc, b| {
+        acc.wrapping_mul(31).wrapping_add(b as u32)
+    });
 
     let base_h = (hash % 360) as f32;
     let s = 60.0 + (hash % 30) as f32;
     let l = 45.0 + (hash % 20) as f32;
 
     let h = match palette {
-        "cool"   => 180.0 + base_h % 120.0,
+        "cool" => 180.0 + base_h % 120.0,
         "purple" => 260.0 + base_h % 60.0,
-        _        => base_h % 60.0 + 10.0,
+        _ => base_h % 60.0 + 10.0,
     };
 
     hsl_to_hex(h, s, l)
@@ -358,7 +390,9 @@ fn build_svg(
 </style>
 <rect width="{w}" height="{h}" fill="url(#bg-grad)"/>
 "##,
-        w = width, h = height, fs = cfg.font_size,
+        w = width,
+        h = height,
+        fs = cfg.font_size,
     ));
 
     // ── Title ────────────────────────────────────────────────────────────────
@@ -397,7 +431,9 @@ fn build_svg(
         let pct = r.total as f64 / total_samples as f64 * 100.0;
         let tooltip = format!(
             "{} ({:.2}% total, {} us self)",
-            escape_xml(&r.name), pct, r.self_s
+            escape_xml(&r.name),
+            pct,
+            r.self_s
         );
 
         svg.push_str(&format!(
@@ -496,10 +532,10 @@ function flamegraphSearch(q) {{
 
 fn escape_xml(s: &str) -> String {
     s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
-     .replace('\'', "&apos;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

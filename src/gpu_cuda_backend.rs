@@ -8,13 +8,15 @@ use std::ffi::c_void;
 use std::sync::{Arc, Mutex};
 
 use cudarc::driver::{
-    CudaDevice, CudaSlice, CudaStream,
-    DeviceSlice, DevicePtr,   // trait imports for .len() and .device_ptr()
+    CudaDevice,
+    CudaSlice,
+    CudaStream,
+    DevicePtr, // trait imports for .len() and .device_ptr()
+    DeviceSlice,
 };
 
 use crate::gpu_backend::{
-    BackendBuffer, BackendKind, BackendStream, ComputeBackend,
-    DeviceBuffer, DeviceStream, GpuError,
+    BackendBuffer, BackendKind, BackendStream, ComputeBackend, DeviceBuffer, DeviceStream, GpuError,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,7 +39,9 @@ impl BackendBuffer for CudaDeviceBuffer {
         *self.inner.lock().unwrap().device_ptr() as usize as *const c_void
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -48,7 +52,7 @@ impl BackendBuffer for CudaDeviceBuffer {
 /// prove is Send/Sync, but the CUDA driver guarantees stream handles are safe
 /// to pass between threads.
 pub struct CudaStreamHandle {
-    pub(crate) stream:    CudaStream,
+    pub(crate) stream: CudaStream,
     pub(crate) stream_id: u64,
 }
 
@@ -64,7 +68,9 @@ impl std::fmt::Debug for CudaStreamHandle {
 }
 
 impl BackendStream for CudaStreamHandle {
-    fn id(&self) -> u64 { self.stream_id }
+    fn id(&self) -> u64 {
+        self.stream_id
+    }
 
     fn synchronize(&self) -> Result<(), GpuError> {
         // cudarc 0.11: per-stream sync via cudarc::driver::result::stream::synchronize,
@@ -74,7 +80,9 @@ impl BackendStream for CudaStreamHandle {
             .map_err(|e| GpuError::cuda(format!("stream synchronize failed: {:?}", e)))
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -83,18 +91,20 @@ impl BackendStream for CudaStreamHandle {
 
 #[derive(Debug)]
 pub struct CudaBackend {
-    device:         Arc<CudaDevice>,
-    device_id:      usize,
-    device_name:    String,
+    device: Arc<CudaDevice>,
+    device_id: usize,
+    device_name: String,
     next_stream_id: std::sync::atomic::AtomicU64,
 }
 
 impl CudaBackend {
     pub fn new(device_id: usize) -> Result<Self, GpuError> {
-        let device = CudaDevice::new(device_id)
-            .map_err(|e| GpuError::cuda(format!(
-                "Failed to initialise CUDA device {}: {:?}", device_id, e
-            )))?;
+        let device = CudaDevice::new(device_id).map_err(|e| {
+            GpuError::cuda(format!(
+                "Failed to initialise CUDA device {}: {:?}",
+                device_id, e
+            ))
+        })?;
 
         let device_name = format!("CUDA Device {}", device_id);
 
@@ -108,14 +118,21 @@ impl CudaBackend {
 }
 
 impl ComputeBackend for CudaBackend {
-    fn kind(&self)      -> BackendKind { BackendKind::Cuda }
-    fn name(&self)      -> &str        { &self.device_name }
-    fn device_id(&self) -> usize       { self.device_id }
+    fn kind(&self) -> BackendKind {
+        BackendKind::Cuda
+    }
+    fn name(&self) -> &str {
+        &self.device_name
+    }
+    fn device_id(&self) -> usize {
+        self.device_id
+    }
 
     // ---- Memory -----------------------------------------------------------
 
     fn alloc_bytes(&self, size: usize) -> Result<DeviceBuffer, GpuError> {
-        let slice: CudaSlice<u8> = self.device
+        let slice: CudaSlice<u8> = self
+            .device
             .alloc_zeros::<u8>(size)
             .map_err(|e| GpuError::cuda(format!("alloc_zeros({}) failed: {:?}", size, e)))?;
 
@@ -134,9 +151,7 @@ impl ComputeBackend for CudaBackend {
     ) -> Result<(), GpuError> {
         let dst_buf = downcast_buffer(dst)?;
 
-        let host_slice: &[u8] = unsafe {
-            std::slice::from_raw_parts(src as *const u8, src_bytes)
-        };
+        let host_slice: &[u8] = unsafe { std::slice::from_raw_parts(src as *const u8, src_bytes) };
 
         self.device
             .htod_sync_copy_into(host_slice, &mut *dst_buf.inner.lock().unwrap())
@@ -151,9 +166,8 @@ impl ComputeBackend for CudaBackend {
     ) -> Result<(), GpuError> {
         let src_buf = downcast_buffer(src)?;
 
-        let host_slice: &mut [u8] = unsafe {
-            std::slice::from_raw_parts_mut(dst as *mut u8, dst_bytes)
-        };
+        let host_slice: &mut [u8] =
+            unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dst_bytes) };
 
         self.device
             .dtoh_sync_copy_into(&*src_buf.inner.lock().unwrap(), host_slice)
@@ -192,14 +206,14 @@ impl ComputeBackend for CudaBackend {
     // ---- Streams ---------------------------------------------------------
 
     fn create_stream(&self) -> Result<DeviceStream, GpuError> {
-        let stream = self.device
+        let stream = self
+            .device
             .fork_default_stream()
             .map_err(|e| GpuError::cuda(format!("fork_default_stream failed: {:?}", e)))?;
 
-        let id = self.next_stream_id.fetch_add(
-            1,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        let id = self
+            .next_stream_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         Ok(Arc::new(CudaStreamHandle {
             stream,
@@ -233,4 +247,3 @@ pub(crate) fn downcast_buffer(buf: &DeviceBuffer) -> Result<&CudaDeviceBuffer, G
         .downcast_ref::<CudaDeviceBuffer>()
         .ok_or_else(|| GpuError::cuda("DeviceBuffer is not a CudaDeviceBuffer"))
 }
-

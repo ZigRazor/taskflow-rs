@@ -1,22 +1,22 @@
-pub mod executor;
-pub mod task;
-pub mod taskflow;
-pub mod subflow;
-pub mod future;
+pub mod advanced;
 pub mod algorithms;
+pub mod composition;
 pub mod condition;
 pub mod cycle_detection;
-pub mod pipeline;
-pub mod typed_pipeline;
-pub mod composition;
-pub mod advanced;
-pub mod scheduler;
-pub mod numa;
-pub mod profiler;
-pub mod visualization;
-pub mod monitoring;
-pub mod metrics;
 pub mod debug;
+pub mod executor;
+pub mod future;
+pub mod metrics;
+pub mod monitoring;
+pub mod numa;
+pub mod pipeline;
+pub mod profiler;
+pub mod scheduler;
+pub mod subflow;
+pub mod task;
+pub mod taskflow;
+pub mod typed_pipeline;
+pub mod visualization;
 
 // ── New advanced scheduling modules ──────────────────────────────────────────
 
@@ -56,74 +56,54 @@ pub mod gpu_opencl;
 #[cfg(feature = "rocm")]
 pub mod gpu_rocm;
 
-
+pub use advanced::{CancellationToken, Priority, TaskMetadata};
+pub use composition::{
+    CloneableWork, ComposedInstance, Composition, CompositionBuilder, CompositionFactory,
+    CompositionParams, ParamValue, ParameterizedComposition, TaskflowComposable,
+};
+pub use condition::{BranchId, ConditionalHandle, Loop};
+pub use cycle_detection::{CycleDetectionResult, CycleDetector};
+pub use debug::{DebugLogger, LogEntry, LogLevel};
 pub use executor::Executor;
+pub use future::TaskflowFuture;
+pub use metrics::{Metrics, MetricsSummary};
+pub use monitoring::PerformanceMetrics;
+pub use numa::{NumaNode, NumaPinning, NumaTopology};
+pub use pipeline::{ConcurrentPipeline, StageType, Token};
+pub use profiler::{ExecutionProfile, Profiler, TaskStats};
+pub use scheduler::{FifoScheduler, PriorityScheduler, RoundRobinScheduler, Scheduler};
+pub use subflow::Subflow;
 pub use task::{Task, TaskHandle};
 pub use taskflow::Taskflow;
-pub use subflow::Subflow;
-pub use future::TaskflowFuture;
-pub use condition::{ConditionalHandle, BranchId, Loop};
-pub use cycle_detection::{CycleDetector, CycleDetectionResult};
-pub use pipeline::{ConcurrentPipeline, Token, StageType};
-pub use composition::{
-    Composition, CompositionBuilder, ComposedInstance, TaskflowComposable,
-    CloneableWork, CompositionParams, ParamValue, ParameterizedComposition, CompositionFactory
-};
-pub use advanced::{Priority, CancellationToken, TaskMetadata};
-pub use scheduler::{Scheduler, FifoScheduler, PriorityScheduler, RoundRobinScheduler};
-pub use numa::{NumaTopology, NumaNode, NumaPinning};
-pub use profiler::{Profiler, ExecutionProfile, TaskStats};
+pub use typed_pipeline::{PipelineBuilder, SimplePipeline, TypeSafePipeline};
 pub use visualization::{
-    generate_dot_graph, save_dot_graph,
-    generate_timeline_svg, save_timeline_svg,
-    generate_html_report, save_html_report
+    generate_dot_graph, generate_html_report, generate_timeline_svg, save_dot_graph,
+    save_html_report, save_timeline_svg,
 };
-pub use monitoring::PerformanceMetrics;
-pub use metrics::{Metrics, MetricsSummary};
-pub use typed_pipeline::{TypeSafePipeline, PipelineBuilder, SimplePipeline};
-pub use debug::{DebugLogger, LogLevel, LogEntry};
 
 // ── New advanced scheduling re-exports ───────────────────────────────────────
-pub use preemptive::{
-    PreemptiveCancellationToken,
-    DeadlineGuard,
-    Preempted,
-    with_deadline,
-};
 pub use dynamic_priority::{
-    DynamicPriorityScheduler,
-    SharedDynamicScheduler,
-    PriorityHandle,
-    EscalationPolicy,
+    DynamicPriorityScheduler, EscalationPolicy, PriorityHandle, SharedDynamicScheduler,
 };
 pub use hwloc_topology::{
+    AffinityStrategy, BindError, CacheInfo, HwTopology, HwlocWorkerAffinity, PackageInfo,
     TopologyProvider,
-    HwTopology,
-    HwlocWorkerAffinity,
-    AffinityStrategy,
-    CacheInfo,
-    PackageInfo,
-    BindError,
 };
+pub use preemptive::{with_deadline, DeadlineGuard, Preempted, PreemptiveCancellationToken};
 
 #[cfg(feature = "async")]
 pub use async_executor::AsyncExecutor;
 
 // GPU types are always exported (stubs when feature is disabled)
-pub use gpu::{GpuDevice, GpuBuffer, GpuTaskConfig};
-pub use gpu_stream::{GpuStream, StreamPool, StreamSet, StreamGuard, StreamAssignment};
+pub use gpu::{GpuBuffer, GpuDevice, GpuTaskConfig};
 pub use gpu_backend::{BackendKind, GpuError};
+pub use gpu_stream::{GpuStream, StreamAssignment, StreamGuard, StreamPool, StreamSet};
 
 // Re-export parallel algorithms
 pub use algorithms::{
-    parallel_for_each,
-    parallel_reduce,
-    parallel_transform,
-    parallel_sort,
-    parallel_inclusive_scan,
-    parallel_exclusive_scan,
+    parallel_exclusive_scan, parallel_for_each, parallel_inclusive_scan, parallel_reduce,
+    parallel_sort, parallel_transform,
 };
-
 
 pub mod dashboard;
 pub mod flamegraph;
@@ -147,13 +127,17 @@ mod tests {
         let mut executor = Executor::new(4);
         let mut taskflow = Taskflow::new();
 
-        let a = taskflow.emplace(|| {
-            println!("Task A");
-        }).name("A");
+        let a = taskflow
+            .emplace(|| {
+                println!("Task A");
+            })
+            .name("A");
 
-        let b = taskflow.emplace(|| {
-            println!("Task B");
-        }).name("B");
+        let b = taskflow
+            .emplace(|| {
+                println!("Task B");
+            })
+            .name("B");
 
         a.precede(&b);
         executor.run(&taskflow).wait();

@@ -54,11 +54,11 @@ use crate::numa::{NumaNode, NumaTopology};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheInfo {
     /// Cache level (1 = L1, 2 = L2, 3 = L3, …).
-    pub level:       u8,
+    pub level: u8,
     /// Total capacity in kilobytes.
-    pub size_kb:     u64,
+    pub size_kb: u64,
     /// Cache line size in bytes.
-    pub line_size:   u32,
+    pub line_size: u32,
     /// Number of ways (associativity).  `0` = fully associative or unknown.
     pub associativity: u32,
     /// Logical CPU indices that share this cache instance.
@@ -76,9 +76,9 @@ impl CacheInfo {
 #[derive(Debug, Clone)]
 pub struct PackageInfo {
     /// Physical package / socket index.
-    pub id:         usize,
+    pub id: usize,
     /// Logical CPU indices on this package.
-    pub cpus:       Vec<usize>,
+    pub cpus: Vec<usize>,
     /// NUMA node indices whose memory is attached to this package.
     pub numa_nodes: Vec<usize>,
 }
@@ -146,11 +146,11 @@ mod hwloc_backend {
     //   TopologyObject::memory() → TopologyObjectMemory  (.local_memory() → u64)
     //   Bitmap::iter() → impl Iterator<Item = u32>
     //   CpuBindFlags: PROCESS | THREAD | STRICT | NOMEMBIND
-    use hwloc2::{Topology, ObjectType, CpuBindFlags};
+    use hwloc2::{CpuBindFlags, ObjectType, Topology};
 
     pub struct HwlocBackend {
-        topology:    Topology,
-        numa_nodes:  Vec<NumaNode>,
+        topology: Topology,
+        numa_nodes: Vec<NumaNode>,
         cpu_to_node: HashMap<usize, usize>,
     }
 
@@ -159,7 +159,11 @@ mod hwloc_backend {
             let topology = Topology::new()
                 .ok_or_else(|| "hwloc: failed to create topology object".to_string())?;
             let (numa_nodes, cpu_to_node) = Self::extract_numa(&topology);
-            Ok(Self { topology, numa_nodes, cpu_to_node })
+            Ok(Self {
+                topology,
+                numa_nodes,
+                cpu_to_node,
+            })
         }
 
         // ── NUMA ──────────────────────────────────────────────────────────────
@@ -171,7 +175,8 @@ mod hwloc_backend {
             if let Ok(objects) = topo.objects_with_type(&ObjectType::NUMANode) {
                 for obj in &objects {
                     let id = obj.logical_index() as usize;
-                    let cpus: Vec<usize> = obj.cpuset()
+                    let cpus: Vec<usize> = obj
+                        .cpuset()
                         .iter()
                         .flat_map(|cs| cs.iter().map(|c| c as usize))
                         .collect();
@@ -180,15 +185,25 @@ mod hwloc_backend {
                     }
                     // local_memory() is on TopologyObjectMemory
                     let memory_bytes = Some(obj.memory().local_memory());
-                    numa_nodes.push(NumaNode { id, cpus, memory_bytes });
+                    numa_nodes.push(NumaNode {
+                        id,
+                        cpus,
+                        memory_bytes,
+                    });
                 }
             }
 
             if numa_nodes.is_empty() {
                 // UMA system: collect all PUs as a single node.
                 let cpus = Self::all_pu_cpus(topo);
-                for &c in &cpus { cpu_to_node.insert(c, 0); }
-                numa_nodes.push(NumaNode { id: 0, cpus, memory_bytes: None });
+                for &c in &cpus {
+                    cpu_to_node.insert(c, 0);
+                }
+                numa_nodes.push(NumaNode {
+                    id: 0,
+                    cpus,
+                    memory_bytes: None,
+                });
             }
 
             (numa_nodes, cpu_to_node)
@@ -208,18 +223,27 @@ mod hwloc_backend {
                 _ => return Vec::new(),
             };
 
-            objects.iter().map(|obj| {
-                let id = obj.logical_index() as usize;
-                let cpus: Vec<usize> = obj.cpuset()
-                    .iter()
-                    .flat_map(|cs| cs.iter().map(|c| c as usize))
-                    .collect();
-                let numa_node_ids = numa_nodes.iter()
-                    .filter(|n| n.cpus.iter().any(|c| cpus.contains(c)))
-                    .map(|n| n.id)
-                    .collect();
-                PackageInfo { id, cpus, numa_nodes: numa_node_ids }
-            }).collect()
+            objects
+                .iter()
+                .map(|obj| {
+                    let id = obj.logical_index() as usize;
+                    let cpus: Vec<usize> = obj
+                        .cpuset()
+                        .iter()
+                        .flat_map(|cs| cs.iter().map(|c| c as usize))
+                        .collect();
+                    let numa_node_ids = numa_nodes
+                        .iter()
+                        .filter(|n| n.cpus.iter().any(|c| cpus.contains(c)))
+                        .map(|n| n.id)
+                        .collect();
+                    PackageInfo {
+                        id,
+                        cpus,
+                        numa_nodes: numa_node_ids,
+                    }
+                })
+                .collect()
         }
 
         // ── Cache ─────────────────────────────────────────────────────────────
@@ -241,7 +265,8 @@ mod hwloc_backend {
                 };
 
                 for obj in &objects {
-                    let shared_cpus: Vec<usize> = obj.cpuset()
+                    let shared_cpus: Vec<usize> = obj
+                        .cpuset()
                         .iter()
                         .flat_map(|cs| cs.iter().map(|c| c as usize))
                         .collect();
@@ -250,8 +275,7 @@ mod hwloc_backend {
                     // TopologyObject::cache_attributes() → Option<TopologyCacheAttributes>
                     // which has .size() → u64, .line_size() → u32, .associativity() → i32.
                     // We use a defensive helper that falls back to zero if unavailable.
-                    let (size_kb, line_size, associativity) =
-                        extract_cache_attrs(obj, level);
+                    let (size_kb, line_size, associativity) = extract_cache_attrs(obj, level);
 
                     caches.push(CacheInfo {
                         level,
@@ -271,15 +295,12 @@ mod hwloc_backend {
     /// hwloc2 2.2.0 exposes `TopologyObject::cache_attributes()` which returns
     /// `Option<&TopologyCacheAttributes>`.  We call it via the known method name;
     /// if it is missing (future API change), the fallback returns safe defaults.
-    fn extract_cache_attrs(
-        obj: &hwloc2::TopologyObject,
-        _level: u8,
-    ) -> (u64, u32, u32) {
+    fn extract_cache_attrs(obj: &hwloc2::TopologyObject, _level: u8) -> (u64, u32, u32) {
         // `cache_attributes()` is the stable method name in hwloc2 2.2.0.
         if let Some(ca) = obj.cache_attributes() {
             let size_kb = ca.size() / 1024;
-            let line    = ca.line_size() as u32;
-            let assoc   = ca.associativity().unsigned_abs();
+            let line = ca.line_size() as u32;
+            let assoc = ca.associativity().unsigned_abs();
             (size_kb, line, assoc)
         } else {
             (0, 64, 0)
@@ -287,10 +308,13 @@ mod hwloc_backend {
     }
 
     impl HwTopology for HwlocBackend {
-        fn numa_nodes(&self) -> &[NumaNode] { &self.numa_nodes }
+        fn numa_nodes(&self) -> &[NumaNode] {
+            &self.numa_nodes
+        }
 
         fn cpu_count(&self) -> usize {
-            self.topology.objects_with_type(&ObjectType::PU)
+            self.topology
+                .objects_with_type(&ObjectType::PU)
                 .map(|v| v.len())
                 .unwrap_or_else(|_| num_cpus::get())
         }
@@ -304,7 +328,9 @@ mod hwloc_backend {
         }
 
         fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> {
-            if cpus.is_empty() { return Ok(()); }
+            if cpus.is_empty() {
+                return Ok(());
+            }
 
             // Build a CpuSet (= Bitmap) from the requested CPU indices.
             let mut cpuset = hwloc2::CpuSet::new();
@@ -322,8 +348,12 @@ mod hwloc_backend {
             self.cpu_to_node.get(&cpu).copied()
         }
 
-        fn is_hwloc_backed(&self) -> bool { true }
-        fn backend_name(&self) -> &'static str { "hwloc2 2.2.0" }
+        fn is_hwloc_backed(&self) -> bool {
+            true
+        }
+        fn backend_name(&self) -> &'static str {
+            "hwloc2 2.2.0"
+        }
     }
 }
 
@@ -335,8 +365,8 @@ mod sysfs_backend {
     /// Fallback topology using `/sys` (Linux) or approximations on other
     /// platforms.
     pub struct SysfsBackend {
-        numa:     NumaTopology,
-        caches:   Vec<CacheInfo>,
+        numa: NumaTopology,
+        caches: Vec<CacheInfo>,
         packages: Vec<PackageInfo>,
     }
 
@@ -345,16 +375,23 @@ mod sysfs_backend {
             let numa = NumaTopology::detect();
             let packages = Self::build_packages(&numa);
             let caches = Self::probe_caches();
-            Self { numa, caches, packages }
+            Self {
+                numa,
+                caches,
+                packages,
+            }
         }
 
         fn build_packages(numa: &NumaTopology) -> Vec<PackageInfo> {
             // Without hwloc we treat each NUMA node as a separate package.
-            numa.nodes.iter().map(|n| PackageInfo {
-                id: n.id,
-                cpus: n.cpus.clone(),
-                numa_nodes: vec![n.id],
-            }).collect()
+            numa.nodes
+                .iter()
+                .map(|n| PackageInfo {
+                    id: n.id,
+                    cpus: n.cpus.clone(),
+                    numa_nodes: vec![n.id],
+                })
+                .collect()
         }
 
         fn probe_caches() -> Vec<CacheInfo> {
@@ -371,9 +408,10 @@ mod sysfs_backend {
                             let level = read_u64_sysfs(&path.join("level"))
                                 .map(|v| v as u8)
                                 .unwrap_or(0);
-                            if level == 0 { continue; }
-                            let size_kb = read_size_kb(&path.join("size"))
-                                .unwrap_or(0);
+                            if level == 0 {
+                                continue;
+                            }
+                            let size_kb = read_size_kb(&path.join("size")).unwrap_or(0);
                             let line_size = read_u64_sysfs(&path.join("coherency_line_size"))
                                 .map(|v| v as u32)
                                 .unwrap_or(64);
@@ -381,10 +419,14 @@ mod sysfs_backend {
                                 .unwrap_or_default();
                             let shared_cpus = parse_cpu_list(&shared_str);
                             // Deduplicate: only record when cpu == min(shared_cpus)
-                            if shared_cpus.first() != Some(&cpu) { continue; }
+                            if shared_cpus.first() != Some(&cpu) {
+                                continue;
+                            }
 
                             caches.push(CacheInfo {
-                                level, size_kb, line_size,
+                                level,
+                                size_kb,
+                                line_size,
                                 associativity: 0,
                                 shared_cpus,
                             });
@@ -409,13 +451,21 @@ mod sysfs_backend {
     }
 
     impl HwTopology for SysfsBackend {
-        fn numa_nodes(&self) -> &[NumaNode] { &self.numa.nodes }
+        fn numa_nodes(&self) -> &[NumaNode] {
+            &self.numa.nodes
+        }
 
-        fn cpu_count(&self) -> usize { num_cpus::get() }
+        fn cpu_count(&self) -> usize {
+            num_cpus::get()
+        }
 
-        fn packages(&self) -> Vec<PackageInfo> { self.packages.clone() }
+        fn packages(&self) -> Vec<PackageInfo> {
+            self.packages.clone()
+        }
 
-        fn cache_info(&self) -> Vec<CacheInfo> { self.caches.clone() }
+        fn cache_info(&self) -> Vec<CacheInfo> {
+            self.caches.clone()
+        }
 
         fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> {
             bind_thread_sysfs(cpus)
@@ -425,15 +475,20 @@ mod sysfs_backend {
             self.numa.node_for_cpu(cpu)
         }
 
-        fn is_hwloc_backed(&self) -> bool { false }
+        fn is_hwloc_backed(&self) -> bool {
+            false
+        }
 
-        fn backend_name(&self) -> &'static str { "sysfs-fallback" }
+        fn backend_name(&self) -> &'static str {
+            "sysfs-fallback"
+        }
     }
 
     // ── sysfs helpers ────────────────────────────────────────────────────────
 
     fn read_u64_sysfs(path: &std::path::Path) -> Option<u64> {
-        std::fs::read_to_string(path).ok()
+        std::fs::read_to_string(path)
+            .ok()
             .and_then(|s| s.trim().parse::<u64>().ok())
     }
 
@@ -481,14 +536,11 @@ fn bind_thread_sysfs(cpus: &[usize]) -> Result<(), BindError> {
                 libc::CPU_SET(cpu, &mut cpuset);
             }
             let tid = libc::pthread_self();
-            let rc = libc::pthread_setaffinity_np(
-                tid,
-                mem::size_of::<libc::cpu_set_t>(),
-                &cpuset,
-            );
+            let rc = libc::pthread_setaffinity_np(tid, mem::size_of::<libc::cpu_set_t>(), &cpuset);
             if rc != 0 {
                 return Err(BindError(format!(
-                    "pthread_setaffinity_np failed: errno={}", rc
+                    "pthread_setaffinity_np failed: errno={}",
+                    rc
                 )));
             }
         }
@@ -502,7 +554,9 @@ fn bind_thread_sysfs(cpus: &[usize]) -> Result<(), BindError> {
         return Err(BindError("Thread affinity not supported on macOS".into()));
     }
     #[allow(unreachable_code)]
-    Err(BindError("Thread affinity not implemented on this platform".into()))
+    Err(BindError(
+        "Thread affinity not implemented on this platform".into(),
+    ))
 }
 
 // ─── Provider enum ────────────────────────────────────────────────────────────
@@ -526,7 +580,9 @@ impl TopologyProvider {
             match hwloc_backend::HwlocBackend::new() {
                 Ok(backend) => {
                     log::info!("Hardware topology: using hwloc2 backend");
-                    return Self { inner: Box::new(backend) };
+                    return Self {
+                        inner: Box::new(backend),
+                    };
                 }
                 Err(e) => {
                     log::warn!("hwloc2 init failed ({}); falling back to sysfs", e);
@@ -534,32 +590,52 @@ impl TopologyProvider {
             }
         }
         log::info!("Hardware topology: using sysfs fallback backend");
-        Self { inner: Box::new(sysfs_backend::SysfsBackend::detect()) }
+        Self {
+            inner: Box::new(sysfs_backend::SysfsBackend::detect()),
+        }
     }
 
     /// Force sysfs backend regardless of feature flags (useful in tests).
     pub fn sysfs() -> Self {
-        Self { inner: Box::new(sysfs_backend::SysfsBackend::detect()) }
+        Self {
+            inner: Box::new(sysfs_backend::SysfsBackend::detect()),
+        }
     }
 }
 
 impl HwTopology for TopologyProvider {
-    fn numa_nodes(&self)               -> &[NumaNode]      { self.inner.numa_nodes() }
-    fn cpu_count(&self)                -> usize            { self.inner.cpu_count() }
-    fn packages(&self)                 -> Vec<PackageInfo> { self.inner.packages() }
-    fn cache_info(&self)               -> Vec<CacheInfo>   { self.inner.cache_info() }
-    fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> { self.inner.bind_thread(cpus) }
-    fn numa_node_for_cpu(&self, cpu: usize) -> Option<usize>       { self.inner.numa_node_for_cpu(cpu) }
-    fn is_hwloc_backed(&self)          -> bool             { self.inner.is_hwloc_backed() }
-    fn backend_name(&self)             -> &'static str     { self.inner.backend_name() }
+    fn numa_nodes(&self) -> &[NumaNode] {
+        self.inner.numa_nodes()
+    }
+    fn cpu_count(&self) -> usize {
+        self.inner.cpu_count()
+    }
+    fn packages(&self) -> Vec<PackageInfo> {
+        self.inner.packages()
+    }
+    fn cache_info(&self) -> Vec<CacheInfo> {
+        self.inner.cache_info()
+    }
+    fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError> {
+        self.inner.bind_thread(cpus)
+    }
+    fn numa_node_for_cpu(&self, cpu: usize) -> Option<usize> {
+        self.inner.numa_node_for_cpu(cpu)
+    }
+    fn is_hwloc_backed(&self) -> bool {
+        self.inner.is_hwloc_backed()
+    }
+    fn backend_name(&self) -> &'static str {
+        self.inner.backend_name()
+    }
 }
 
 // ─── Worker affinity helper ───────────────────────────────────────────────────
 
 /// Assigns worker threads to hardware resources based on topology.
 pub struct HwlocWorkerAffinity {
-    topology:  TopologyProvider,
-    strategy:  AffinityStrategy,
+    topology: TopologyProvider,
+    strategy: AffinityStrategy,
     num_workers: usize,
 }
 
@@ -580,7 +656,11 @@ pub enum AffinityStrategy {
 
 impl HwlocWorkerAffinity {
     pub fn new(topology: TopologyProvider, strategy: AffinityStrategy, num_workers: usize) -> Self {
-        Self { topology, strategy, num_workers }
+        Self {
+            topology,
+            strategy,
+            num_workers,
+        }
     }
 
     /// Compute the CPU set for worker `worker_id`.
@@ -590,11 +670,14 @@ impl HwlocWorkerAffinity {
 
             AffinityStrategy::NUMARoundRobin => {
                 let nodes = self.topology.numa_nodes();
-                if nodes.is_empty() { return Vec::new(); }
+                if nodes.is_empty() {
+                    return Vec::new();
+                }
                 let node_idx = worker_id % nodes.len();
                 let node = &nodes[node_idx];
                 let local_idx = worker_id / nodes.len();
-                node.cpus.get(local_idx % node.cpus.len().max(1))
+                node.cpus
+                    .get(local_idx % node.cpus.len().max(1))
                     .map(|&cpu| vec![cpu])
                     .unwrap_or_default()
             }
@@ -615,21 +698,27 @@ impl HwlocWorkerAffinity {
             AffinityStrategy::PhysicalCores => {
                 // Approximate: take every other CPU (skip HT sibling).
                 let all_cpus: Vec<usize> = (0..self.topology.cpu_count()).collect();
-                let physical: Vec<usize> = all_cpus.iter()
+                let physical: Vec<usize> = all_cpus
+                    .iter()
                     .step_by(2) // heuristic: even indices = physical cores
                     .copied()
                     .collect();
-                physical.get(worker_id % physical.len().max(1))
+                physical
+                    .get(worker_id % physical.len().max(1))
                     .map(|&c| vec![c])
                     .unwrap_or_default()
             }
 
             AffinityStrategy::L3CacheDomain => {
-                let caches: Vec<_> = self.topology.cache_info()
+                let caches: Vec<_> = self
+                    .topology
+                    .cache_info()
                     .into_iter()
                     .filter(|c| c.level == 3)
                     .collect();
-                if caches.is_empty() { return Vec::new(); }
+                if caches.is_empty() {
+                    return Vec::new();
+                }
                 let domain = &caches[worker_id % caches.len()];
                 domain.shared_cpus.clone()
             }
@@ -697,12 +786,21 @@ mod tests {
     fn cache_levels_sane() {
         let topo = TopologyProvider::detect();
         for cache in topo.cache_info() {
-            assert!(cache.level >= 1 && cache.level <= 4,
-                "unexpected cache level {}", cache.level);
-            assert!(cache.line_size >= 16,
-                "suspiciously small line size {}", cache.line_size);
-            assert!(!cache.shared_cpus.is_empty(),
-                "cache L{} has no associated CPUs", cache.level);
+            assert!(
+                cache.level >= 1 && cache.level <= 4,
+                "unexpected cache level {}",
+                cache.level
+            );
+            assert!(
+                cache.line_size >= 16,
+                "suspiciously small line size {}",
+                cache.line_size
+            );
+            assert!(
+                !cache.shared_cpus.is_empty(),
+                "cache L{} has no associated CPUs",
+                cache.level
+            );
         }
     }
 
@@ -712,8 +810,14 @@ mod tests {
         for node in topo.numa_nodes() {
             for &cpu in &node.cpus {
                 let result = topo.numa_node_for_cpu(cpu);
-                assert_eq!(result, Some(node.id),
-                    "cpu {} should map to node {} but got {:?}", cpu, node.id, result);
+                assert_eq!(
+                    result,
+                    Some(node.id),
+                    "cpu {} should map to node {} but got {:?}",
+                    cpu,
+                    node.id,
+                    result
+                );
             }
         }
     }
@@ -737,8 +841,11 @@ mod tests {
             // L3 domain must contain at least the one CPU.
             if !cpus.is_empty() {
                 for &cpu in &cpus {
-                    assert!(cpu < affinity.topology.cpu_count(),
-                        "CPU index {} out of range", cpu);
+                    assert!(
+                        cpu < affinity.topology.cpu_count(),
+                        "CPU index {} out of range",
+                        cpu
+                    );
                 }
             }
         }

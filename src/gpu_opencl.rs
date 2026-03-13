@@ -15,20 +15,19 @@
 #![cfg(feature = "opencl")]
 
 use std::ffi::c_void;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use opencl3::{
     command_queue::{CommandQueue, CL_QUEUE_PROFILING_ENABLE},
     context::Context,
-    device::{Device, CL_DEVICE_TYPE_GPU, CL_DEVICE_TYPE_ALL},
+    device::{Device, CL_DEVICE_TYPE_ALL, CL_DEVICE_TYPE_GPU},
     memory::{Buffer as ClBuffer, CL_MEM_READ_WRITE},
     platform::get_platforms,
 };
 
 use crate::gpu_backend::{
-    BackendBuffer, BackendKind, BackendStream,
-    ComputeBackend, DeviceBuffer, DeviceStream, GpuError,
+    BackendBuffer, BackendKind, BackendStream, ComputeBackend, DeviceBuffer, DeviceStream, GpuError,
 };
 
 // ---------------------------------------------------------------------------
@@ -56,7 +55,9 @@ unsafe impl Send for OpenCLBuffer {}
 unsafe impl Sync for OpenCLBuffer {}
 
 impl BackendBuffer for OpenCLBuffer {
-    fn size_bytes(&self) -> usize { self.size_bytes }
+    fn size_bytes(&self) -> usize {
+        self.size_bytes
+    }
 
     fn device_ptr(&self) -> *const c_void {
         // OpenCL buffers don't have a raw device pointer accessible from
@@ -65,7 +66,9 @@ impl BackendBuffer for OpenCLBuffer {
         std::ptr::null()
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +87,9 @@ unsafe impl Send for OpenCLStream {}
 unsafe impl Sync for OpenCLStream {}
 
 impl BackendStream for OpenCLStream {
-    fn id(&self) -> u64 { self.id }
+    fn id(&self) -> u64 {
+        self.id
+    }
 
     fn synchronize(&self) -> Result<(), GpuError> {
         self.queue
@@ -92,7 +97,9 @@ impl BackendStream for OpenCLStream {
             .map_err(|e| ocl_err(format!("CommandQueue::finish failed: {:?}", e)))
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,13 +107,13 @@ impl BackendStream for OpenCLStream {
 // ---------------------------------------------------------------------------
 
 pub struct OpenCLBackend {
-    pub(crate) context:   Arc<Context>,
-    pub(crate) device:    Device,
+    pub(crate) context: Arc<Context>,
+    pub(crate) device: Device,
     pub(crate) device_id: usize,
-    pub(crate) name:      String,
-    next_stream_id:       AtomicU64,
+    pub(crate) name: String,
+    next_stream_id: AtomicU64,
     /// Default command queue (used for synchronous operations).
-    default_queue:        Arc<Mutex<CommandQueue>>,
+    default_queue: Arc<Mutex<CommandQueue>>,
 }
 
 impl std::fmt::Debug for OpenCLBackend {
@@ -125,20 +132,19 @@ impl OpenCLBackend {
     /// position `device_id` in that flat list.
     pub fn new(device_id: usize) -> Result<Self, GpuError> {
         // Enumerate all platforms
-        let platforms = get_platforms()
-            .map_err(|e| ocl_err(format!("get_platforms failed: {:?}", e)))?;
+        let platforms =
+            get_platforms().map_err(|e| ocl_err(format!("get_platforms failed: {:?}", e)))?;
 
         // Collect all GPU devices across all platforms
         let mut all_devices: Vec<(Device, String)> = Vec::new();
 
         for platform in &platforms {
-            let devs = platform
-                .get_devices(CL_DEVICE_TYPE_GPU)
-                .unwrap_or_default();
+            let devs = platform.get_devices(CL_DEVICE_TYPE_GPU).unwrap_or_default();
 
             for d in devs {
                 let dev = Device::new(d);
-                let name = dev.name()
+                let name = dev
+                    .name()
                     .unwrap_or_else(|_| "Unknown OpenCL Device".to_string());
                 all_devices.push((dev, name));
             }
@@ -147,9 +153,7 @@ impl OpenCLBackend {
         // Fall back to any device if no GPU found (CPU OpenCL, etc.)
         if all_devices.is_empty() {
             for platform in &platforms {
-                let devs = platform
-                    .get_devices(CL_DEVICE_TYPE_ALL)
-                    .unwrap_or_default();
+                let devs = platform.get_devices(CL_DEVICE_TYPE_ALL).unwrap_or_default();
                 for d in devs {
                     let dev = Device::new(d);
                     let name = dev.name().unwrap_or_default();
@@ -165,7 +169,8 @@ impl OpenCLBackend {
         if device_id >= all_devices.len() {
             return Err(ocl_err(format!(
                 "OpenCL device_id {} out of range ({} devices available)",
-                device_id, all_devices.len()
+                device_id,
+                all_devices.len()
             )));
         }
 
@@ -175,14 +180,15 @@ impl OpenCLBackend {
             .map_err(|e| ocl_err(format!("Context::from_device failed: {:?}", e)))?;
 
         // Create a default in-order command queue
-        let default_queue = CommandQueue::create_default_with_properties(
-            &context,
-            CL_QUEUE_PROFILING_ENABLE,
-            0,
-        )
-        .map_err(|e| ocl_err(format!("CommandQueue::create_default failed: {:?}", e)))?;
+        let default_queue =
+            CommandQueue::create_default_with_properties(&context, CL_QUEUE_PROFILING_ENABLE, 0)
+                .map_err(|e| ocl_err(format!("CommandQueue::create_default failed: {:?}", e)))?;
 
-        log::info!("OpenCL backend initialised: {} (device {})", name, device_id);
+        log::info!(
+            "OpenCL backend initialised: {} (device {})",
+            name,
+            device_id
+        );
 
         Ok(Self {
             context: Arc::new(context),
@@ -196,25 +202,29 @@ impl OpenCLBackend {
 }
 
 impl ComputeBackend for OpenCLBackend {
-    fn kind(&self)      -> BackendKind { BackendKind::OpenCL }
-    fn name(&self)      -> &str        { &self.name }
-    fn device_id(&self) -> usize       { self.device_id }
+    fn kind(&self) -> BackendKind {
+        BackendKind::OpenCL
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn device_id(&self) -> usize {
+        self.device_id
+    }
 
     // ---- Memory -----------------------------------------------------------
 
     fn alloc_bytes(&self, size: usize) -> Result<DeviceBuffer, GpuError> {
         // CL_MEM_READ_WRITE: accessible for both kernel reads and writes
         let buf: ClBuffer<u8> = unsafe {
-            ClBuffer::create(
-                &self.context,
-                CL_MEM_READ_WRITE,
-                size,
-                std::ptr::null_mut(),
-            )
-            .map_err(|e| ocl_err(format!("clCreateBuffer({} bytes) failed: {:?}", size, e)))?
+            ClBuffer::create(&self.context, CL_MEM_READ_WRITE, size, std::ptr::null_mut())
+                .map_err(|e| ocl_err(format!("clCreateBuffer({} bytes) failed: {:?}", size, e)))?
         };
 
-        Ok(Arc::new(OpenCLBuffer { buf: Mutex::new(buf), size_bytes: size }))
+        Ok(Arc::new(OpenCLBuffer {
+            buf: Mutex::new(buf),
+            size_bytes: size,
+        }))
     }
 
     // ---- Synchronous transfers -------------------------------------------
@@ -281,7 +291,7 @@ impl ComputeBackend for OpenCLBackend {
         stream: &DeviceStream,
     ) -> Result<(), GpuError> {
         let dst_buf = dst_as_opencl(dst)?;
-        let queue   = stream_as_opencl(stream)?;
+        let queue = stream_as_opencl(stream)?;
 
         // CL_FALSE = non-blocking write
         let data = std::slice::from_raw_parts(src as *const u8, src_bytes);
@@ -306,7 +316,7 @@ impl ComputeBackend for OpenCLBackend {
         stream: &DeviceStream,
     ) -> Result<(), GpuError> {
         let src_buf = dst_as_opencl(src)?;
-        let queue   = stream_as_opencl(stream)?;
+        let queue = stream_as_opencl(stream)?;
 
         let data = std::slice::from_raw_parts_mut(dst as *mut u8, dst_bytes);
         queue
@@ -353,9 +363,11 @@ impl ComputeBackend for OpenCLBackend {
 
     fn memory_info(&self) -> Result<(usize, usize), GpuError> {
         // CL_DEVICE_GLOBAL_MEM_SIZE
-        let total = self.device
+        let total = self
+            .device
             .global_mem_size()
-            .map_err(|e| ocl_err(format!("global_mem_size failed: {:?}", e)))? as usize;
+            .map_err(|e| ocl_err(format!("global_mem_size failed: {:?}", e)))?
+            as usize;
 
         // OpenCL has no direct "free memory" query; return total for both.
         Ok((total, total))
@@ -373,7 +385,8 @@ fn dst_as_opencl(buf: &DeviceBuffer) -> Result<&OpenCLBuffer, GpuError> {
 }
 
 fn stream_as_opencl(stream: &DeviceStream) -> Result<&CommandQueue, GpuError> {
-    stream.as_any()
+    stream
+        .as_any()
         .downcast_ref::<OpenCLStream>()
         .map(|s| &s.queue)
         .ok_or_else(|| ocl_err("DeviceStream is not an OpenCL stream"))

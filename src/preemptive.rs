@@ -40,8 +40,8 @@
 //! }
 //! ```
 
-use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -59,7 +59,7 @@ impl std::fmt::Display for Preempted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.reason {
             Some(r) => write!(f, "Task preempted: {}", r),
-            None    => write!(f, "Task preempted"),
+            None => write!(f, "Task preempted"),
         }
     }
 }
@@ -124,7 +124,9 @@ impl std::fmt::Debug for PreemptiveCancellationToken {
 }
 
 impl Default for PreemptiveCancellationToken {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PreemptiveCancellationToken {
@@ -132,7 +134,9 @@ impl PreemptiveCancellationToken {
 
     /// Create a fresh, non-cancelled token.
     pub fn new() -> Self {
-        Self { state: PreemptionState::new() }
+        Self {
+            state: PreemptionState::new(),
+        }
     }
 
     // ── Cancellation triggers ────────────────────────────────────────────────
@@ -199,9 +203,7 @@ impl PreemptiveCancellationToken {
     #[inline(always)]
     pub fn check(&self) -> Result<(), Preempted> {
         if self.is_cancelled() {
-            let reason = self.state.reason.lock()
-                .ok()
-                .and_then(|r| r.clone());
+            let reason = self.state.reason.lock().ok().and_then(|r| r.clone());
             Err(Preempted { reason })
         } else {
             Ok(())
@@ -276,7 +278,9 @@ impl PreemptiveCancellationToken {
     fn cancel_at_instant(&self, deadline: Instant, reason: Option<String>) {
         // Encode deadline as UNIX ms for the watchdog thread.
         let unix_ms = unix_ms_from_instant(deadline);
-        self.state.deadline_unix_ms.store(unix_ms, Ordering::Release);
+        self.state
+            .deadline_unix_ms
+            .store(unix_ms, Ordering::Release);
 
         let state = self.state.clone();
         thread::Builder::new()
@@ -298,9 +302,7 @@ impl PreemptiveCancellationToken {
                 // which then also blocks any caller of cancel() on the
                 // main thread when the guard scope exits.
                 let lock = state.wakeup.lock().unwrap();
-                let (guard, timed_out) = state.condvar
-                    .wait_timeout(lock, sleep_for)
-                    .unwrap();
+                let (guard, timed_out) = state.condvar.wait_timeout(lock, sleep_for).unwrap();
                 let should_cancel =
                     timed_out.timed_out() && !state.cancelled.load(Ordering::Acquire);
                 drop(guard); // release wakeup lock BEFORE cancel_with_reason
@@ -332,7 +334,9 @@ pub struct DeadlineGuard {
 impl DeadlineGuard {
     /// How much of the budget remains, or `Duration::ZERO` if expired.
     pub fn remaining(&self) -> Duration {
-        self.budget.checked_sub(self.start.elapsed()).unwrap_or(Duration::ZERO)
+        self.budget
+            .checked_sub(self.start.elapsed())
+            .unwrap_or(Duration::ZERO)
     }
 
     /// True if the budget window has already expired.
@@ -398,8 +402,8 @@ fn unix_ms_from_instant(deadline: Instant) -> u64 {
 
 #[cfg(target_os = "linux")]
 mod signal_preemption {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     // Per-thread interrupt flag set by the SIGUSR2 handler.
     thread_local! {
@@ -427,17 +431,26 @@ mod signal_preemption {
 
     /// Send SIGUSR2 to `thread`.
     pub(super) fn preempt(thread: libc::pthread_t) {
-        unsafe { libc::pthread_kill(thread, libc::SIGUSR2); }
+        unsafe {
+            libc::pthread_kill(thread, libc::SIGUSR2);
+        }
     }
 
     /// Check and clear the thread-local flag.
     #[inline]
     pub(super) fn check_flag() -> Result<(), super::Preempted> {
         let preempted = SIGNAL_PREEMPTED.with(|f| {
-            if f.get() { f.set(false); true } else { false }
+            if f.get() {
+                f.set(false);
+                true
+            } else {
+                false
+            }
         });
         if preempted {
-            Err(super::Preempted { reason: Some("signal preemption".into()) })
+            Err(super::Preempted {
+                reason: Some("signal preemption".into()),
+            })
         } else {
             Ok(())
         }
@@ -449,8 +462,8 @@ mod signal_preemption {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering as AO};
+    use std::sync::Arc;
 
     #[test]
     fn manual_cancel() {
@@ -518,18 +531,19 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
 
-        let result = with_deadline(Duration::from_millis(80), |tok| {
-            loop {
-                tok.check()?;
-                c.fetch_add(1, AO::Relaxed);
-                thread::sleep(Duration::from_millis(20));
-            }
+        let result = with_deadline(Duration::from_millis(80), |tok| loop {
+            tok.check()?;
+            c.fetch_add(1, AO::Relaxed);
+            thread::sleep(Duration::from_millis(20));
         });
         assert!(result.is_err());
         let iterations = counter.load(AO::Relaxed);
         // Should have run at least once but not 10+ times
-        assert!((1..=6).contains(&iterations),
-            "expected 1-6 iterations, got {}", iterations);
+        assert!(
+            (1..=6).contains(&iterations),
+            "expected 1-6 iterations, got {}",
+            iterations
+        );
     }
 
     #[test]

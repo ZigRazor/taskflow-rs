@@ -14,10 +14,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use taskflow_rs::gpu::{BackendKind, GpuBuffer, GpuDevice};
 use taskflow_rs::{Executor, Taskflow};
-use taskflow_rs::gpu::{
-    GpuDevice, GpuBuffer, BackendKind,
-};
 
 // ---------------------------------------------------------------------------
 // Demo 1 — Stream Pool with Round-Robin Assignment
@@ -29,8 +27,14 @@ fn demo_stream_pool() {
     println!("╚══════════════════════════════════════════════════════╝\n");
 
     let device = match GpuDevice::new(0) {
-        Ok(d)  => { println!("  ✓ Device: {} ({:?})", d.name(), d.backend_kind()); d }
-        Err(e) => { println!("  ✗ No GPU: {} (using stub)", e); return; }
+        Ok(d) => {
+            println!("  ✓ Device: {} ({:?})", d.name(), d.backend_kind());
+            d
+        }
+        Err(e) => {
+            println!("  ✗ No GPU: {} (using stub)", e);
+            return;
+        }
     };
 
     // Create a pool of 4 streams — each stream can run independently
@@ -38,7 +42,7 @@ fn demo_stream_pool() {
     println!("  ✓ StreamPool created with {} streams\n", pool.len());
 
     let num_batches = 8;
-    let batch_size  = 256 * 1024; // 256K f32 elements = 1 MB
+    let batch_size = 256 * 1024; // 256K f32 elements = 1 MB
 
     let start = Instant::now();
 
@@ -51,8 +55,7 @@ fn demo_stream_pool() {
             .map(|i| (batch_idx * batch_size + i) as f32)
             .collect();
 
-        let mut buf: GpuBuffer<f32> = GpuBuffer::allocate(&device, batch_size)
-            .expect("allocate");
+        let mut buf: GpuBuffer<f32> = GpuBuffer::allocate(&device, batch_size).expect("allocate");
 
         // Enqueue async H2D on this stream — returns immediately on CPU
         unsafe {
@@ -86,26 +89,23 @@ fn demo_double_buffer_pipeline() {
     println!("╚══════════════════════════════════════════════════════╝\n");
 
     let device = match GpuDevice::new(0) {
-        Ok(d)  => d,
-        Err(e) => { println!("  ✗ No GPU: {}", e); return; }
+        Ok(d) => d,
+        Err(e) => {
+            println!("  ✗ No GPU: {}", e);
+            return;
+        }
     };
 
-    const DEPTH:      usize = 2;   // pipeline depth
+    const DEPTH: usize = 2; // pipeline depth
     const BATCH_SIZE: usize = 512 * 1024; // 2 MB per buffer
-    const N_BATCHES:  usize = 6;
+    const N_BATCHES: usize = 6;
 
     // Create a 2-deep stream set for the pipeline
     let stream_set = device.stream_set(DEPTH, "pipeline").expect("stream_set");
 
     // Two host-pinned buffers (alternating)
-    let mut host_src  = [
-        vec![0.0f32; BATCH_SIZE],
-        vec![0.0f32; BATCH_SIZE],
-    ];
-    let mut host_dst  = [
-        vec![0.0f32; BATCH_SIZE],
-        vec![0.0f32; BATCH_SIZE],
-    ];
+    let mut host_src = [vec![0.0f32; BATCH_SIZE], vec![0.0f32; BATCH_SIZE]];
+    let mut host_dst = [vec![0.0f32; BATCH_SIZE], vec![0.0f32; BATCH_SIZE]];
     let mut dev_bufs: Vec<GpuBuffer<f32>> = (0..DEPTH)
         .map(|_| GpuBuffer::allocate(&device, BATCH_SIZE).expect("allocate"))
         .collect();
@@ -113,7 +113,7 @@ fn demo_double_buffer_pipeline() {
     let start = Instant::now();
 
     for batch in 0..N_BATCHES {
-        let slot   = batch % DEPTH;
+        let slot = batch % DEPTH;
         let stream = stream_set.get(batch);
 
         // 1. Wait for the slot to be free (sync *this slot's* stream)
@@ -142,14 +142,19 @@ fn demo_double_buffer_pipeline() {
 
         println!(
             "  Batch {:2}: slot={} stream={} — H2D+D2H enqueued",
-            batch, slot, stream.id()
+            batch,
+            slot,
+            stream.id()
         );
     }
 
     // Final barrier
     stream_set.synchronize_all().expect("final sync");
 
-    println!("\n  ✓ Double-buffer pipeline complete in {:.2?}", start.elapsed());
+    println!(
+        "\n  ✓ Double-buffer pipeline complete in {:.2?}",
+        start.elapsed()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -172,11 +177,14 @@ fn demo_taskflow_multi_stream() {
     println!("╚══════════════════════════════════════════════════════╝\n");
 
     let device = match GpuDevice::new(0) {
-        Ok(d)  => d,
-        Err(e) => { println!("  ✗ No GPU: {}", e); return; }
+        Ok(d) => d,
+        Err(e) => {
+            println!("  ✗ No GPU: {}", e);
+            return;
+        }
     };
 
-    const N_STREAMS:  usize = 3;
+    const N_STREAMS: usize = 3;
     const BATCH_SIZE: usize = 128 * 1024;
 
     // Shared data protected by a Mutex for cross-task communication
@@ -194,10 +202,15 @@ fn demo_taskflow_multi_stream() {
     let generate = taskflow.emplace(move || {
         let mut data = data_ref.lock().unwrap();
         for s in 0..N_STREAMS {
-            let batch: Vec<f32> = (0..BATCH_SIZE).map(|i| (s * BATCH_SIZE + i) as f32).collect();
+            let batch: Vec<f32> = (0..BATCH_SIZE)
+                .map(|i| (s * BATCH_SIZE + i) as f32)
+                .collect();
             data.push(batch);
         }
-        println!("  [CPU] Generated {} batches of {} elements", N_STREAMS, BATCH_SIZE);
+        println!(
+            "  [CPU] Generated {} batches of {} elements",
+            N_STREAMS, BATCH_SIZE
+        );
     });
 
     // -- Tasks 2..4: one GPU task per stream ----------------------------
@@ -206,17 +219,16 @@ fn demo_taskflow_multi_stream() {
     for stream_idx in 0..N_STREAMS {
         let data_ref = Arc::clone(&shared_data);
         let pool_ref = Arc::clone(&pool);
-        let dev_ref  = Arc::clone(&device);
+        let dev_ref = Arc::clone(&device);
 
         let gpu_task = taskflow.emplace(move || {
-            let guard  = pool_ref.acquire().expect("acquire");
+            let guard = pool_ref.acquire().expect("acquire");
             let stream = guard.stream();
 
             let data = data_ref.lock().unwrap();
-            let src  = &data[stream_idx];
+            let src = &data[stream_idx];
 
-            let mut buf = GpuBuffer::allocate(&dev_ref, src.len())
-                .expect("alloc");
+            let mut buf = GpuBuffer::allocate(&dev_ref, src.len()).expect("alloc");
 
             // Async H2D on this stream
             unsafe {
@@ -237,7 +249,9 @@ fn demo_taskflow_multi_stream() {
 
             println!(
                 "  [GPU stream {}] Processed {} elements on {}",
-                stream.id(), src.len(), dev_ref.name()
+                stream.id(),
+                src.len(),
+                dev_ref.name()
             );
         });
 
@@ -257,7 +271,10 @@ fn demo_taskflow_multi_stream() {
 
     let start = Instant::now();
     executor.run(&taskflow).wait();
-    println!("\n  ✓ TaskFlow multi-stream DAG complete in {:.2?}", start.elapsed());
+    println!(
+        "\n  ✓ TaskFlow multi-stream DAG complete in {:.2?}",
+        start.elapsed()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -284,8 +301,8 @@ fn demo_backend_selection() {
                 format!("{:?}", kind),
                 dev.name(),
                 dev.memory_info()
-                   .map(|(_, t)| t as f64 / 1e9)
-                   .unwrap_or(0.0)
+                    .map(|(_, t)| t as f64 / 1e9)
+                    .unwrap_or(0.0)
             ),
             Err(e) => println!("  ✗ {:<10} — {}", format!("{:?}", kind), e),
         }
