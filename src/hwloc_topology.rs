@@ -340,7 +340,7 @@ mod hwloc_backend {
 
             // CpuBindFlags::THREAD binds the calling OS thread.
             self.topology
-                .set_cpubind(cpuset, CpuBindFlags::ASSUME_SINGLE_THREAD)
+                .set_cpubind(cpuset, CpuBindFlags::CPUBIND_THREAD)
                 .map_err(|e| BindError(format!("hwloc bind_thread failed: {:?}", e)))
         }
 
