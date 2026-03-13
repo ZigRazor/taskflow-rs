@@ -6,7 +6,8 @@ TaskFlow-RS is a task-parallel programming library built around directed acyclic
 closures. Each node in the graph is a task; edges encode happens-before relationships. An executor
 drives the graph to completion using a work-stealing thread pool. Three scheduling subsystems layer
 on top of the core executor: a static priority queue, a dynamic reprioritization engine, and a
-hardware-topology-aware affinity layer.
+hardware-topology-aware affinity layer. A dedicated tooling layer provides real-time observability,
+interactive flamegraphs, and automated regression detection.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -30,6 +31,13 @@ hardware-topology-aware affinity layer.
 │              Hardware Topology Layer                           │
 │  TopologyProvider (hwloc2 / sysfs fallback)                   │
 │  HwlocWorkerAffinity  ·  AffinityStrategy  ·  CacheInfo       │
+└──────────────┬───────────────────────────────────────────────┘
+               │
+┌──────────────▼───────────────────────────────────────────────┐
+│                     Tooling Layer                              │
+│  DashboardServer (HTTP/SSE)  ·  FlamegraphGenerator           │
+│  RegressionDetector  ·  Profiler  ·  PerformanceMetrics       │
+│  DebugLogger  ·  DOT / SVG / HTML visualization               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -169,9 +177,58 @@ hardware-topology-aware affinity layer.
   - [x] DOT graph export, SVG timeline, HTML report
   - [x] Real-time `PerformanceMetrics` and worker utilization
   - [x] `DebugLogger` with structured log levels
-  - [ ] Real-time dashboard (planned)
-  - [ ] Flamegraph generation (planned)
-  - [ ] Automated regression detection (planned)
+  - [x] **Real-time dashboard** — HTTP server with SSE, self-contained HTML+JS UI (`src/dashboard.rs`)
+  - [x] **Flamegraph generation** — interactive SVG from `ExecutionProfile` or folded stacks (`src/flamegraph.rs`)
+  - [x] **Automated regression detection** — statistical baseline comparison with JSON persistence (`src/regression.rs`)
+
+---
+
+## Module Map
+
+```
+src/
+├── lib.rs                  — public API surface
+├── task.rs                 — Task, TaskHandle, TaskId
+├── taskflow.rs             — Taskflow (DAG builder)
+├── executor.rs             — Executor (work-stealing)
+├── subflow.rs              — Subflow (nested graphs)
+├── future.rs               — TaskflowFuture
+├── condition.rs            — ConditionalHandle, BranchId, Loop
+├── cycle_detection.rs      — CycleDetector, CycleDetectionResult
+├── pipeline.rs             — ConcurrentPipeline, Token, StageType
+├── typed_pipeline.rs       — TypeSafePipeline, PipelineBuilder, SimplePipeline
+├── composition.rs          — Composition, CompositionBuilder, ParameterizedComposition
+├── algorithms.rs           — parallel_for_each / reduce / transform / sort / scan
+│
+├── advanced.rs             — Priority, CancellationToken, TaskMetadata
+├── scheduler.rs            — Scheduler trait, FifoScheduler, PriorityScheduler, RoundRobinScheduler
+├── numa.rs                 — NumaTopology, NumaNode, NumaPinning
+│
+├── preemptive.rs           — PreemptiveCancellationToken, DeadlineGuard, Preempted
+├── dynamic_priority.rs     — DynamicPriorityScheduler, SharedDynamicScheduler, PriorityHandle
+├── escalation.rs           — EscalationPolicy
+├── topology.rs             — TopologyProvider, HwTopology, HwlocBackend, SysfsBackend
+├── affinity.rs             — HwlocWorkerAffinity, AffinityStrategy, CacheInfo
+│
+├── gpu.rs                  — GpuDevice, GpuBuffer, GpuTaskConfig (public API)
+├── gpu_backend.rs          — ComputeBackend trait, BackendKind, DeviceBuffer
+├── gpu_stream.rs           — GpuStream, StreamPool, StreamSet, StreamGuard
+├── gpu_cuda_backend.rs     — CUDA backend (feature = "gpu")
+├── gpu_opencl.rs           — OpenCL backend (feature = "opencl")
+├── gpu_rocm.rs             — ROCm/HIP backend (feature = "rocm")
+│
+├── profiler.rs             — Profiler, ExecutionProfile, TaskStats
+├── visualization.rs        — DOT / SVG / HTML export
+├── monitoring.rs           — PerformanceMetrics, worker utilization
+├── metrics.rs              — Metrics, MetricsSummary
+├── debug.rs                — DebugLogger, LogLevel, LogEntry
+├── dashboard.rs            — DashboardServer, DashboardHandle, DashboardConfig  ← NEW
+├── flamegraph.rs           — FlamegraphGenerator, FlamegraphConfig              ← NEW
+├── regression.rs           — RegressionDetector, Baseline, RegressionThresholds ← NEW
+│
+├── async_executor.rs       — AsyncExecutor (feature = "async")
+└── loop_and_cycle.rs       — Loop detection and loop constructs
+```
 
 ---
 
@@ -192,187 +249,135 @@ Layer 2 — Watchdog (background thread, ~1 ms granularity)
 
 Layer 3 — Signal (Linux only, microsecond latency, opt-in)
   PreemptiveCancellationToken::install_signal_handler()  (once at startup)
-  token.signal_preempt_thread(pthread_id)                 →  SIGUSR2
-  token.check_signal()                                    →  thread-local flag
+  token.signal_preempt_thread(pthread_id)                →  SIGUSR2
+  token.check_signal()                                   →  thread-local flag
 ```
 
 **Watchdog self-deadlock fix:** `Condvar::wait_timeout` re-acquires the `wakeup` mutex on
 return. The watchdog must `drop(guard)` that re-acquired lock *before* calling
 `cancel_with_reason`, which itself locks `wakeup` to notify waiters. Holding the lock across
-the call causes the thread to block on a mutex it already owns. The fix:
-
-```rust
-let (guard, timed_out) = state.condvar.wait_timeout(lock, sleep_for).unwrap();
-let should_cancel = timed_out.timed_out() && !state.cancelled.load(Ordering::Acquire);
-drop(guard);          // ← release BEFORE cancel_with_reason
-if should_cancel {
-    state.cancel_with_reason(reason);
-}
-```
-
-**`DeadlineGuard` RAII:** scope-bound budgets that cancel automatically on drop:
-
-```rust
-let _guard = token.deadline_guard(Duration::from_millis(100));
-// ...task body...
-// guard drops here: if elapsed > 100 ms, token is cancelled
-```
-
-### Dynamic Priority Adjustment: Dual-Index Data Structure
-
-Standard `BinaryHeap` does not support O(log n) key updates. The scheduler maintains two
-parallel data structures:
-
-```
-index:   BTreeMap<(RevPriority, SeqNum), TaskId>   ← ordered pop:     O(log n)
-reverse: HashMap<TaskId, (RevPriority, SeqNum)>    ← lookup by id:    O(1)
-```
-
-`reprioritize(task_id, new_priority)`:
-1. `reverse.remove(task_id)` → retrieves `(old_rp, old_seq)`  — O(1)
-2. `index.remove((old_rp, old_seq))`  — O(log n)
-3. `index.insert((new_rp, old_seq), task_id)` — O(log n)
-4. `reverse.insert(task_id, (new_rp, old_seq))` — O(1)
-
-**Sequence number invariant:** the sequence number assigned at push time is preserved through
-all reprioritizations. This guarantees that among tasks sharing the same priority, order of
-insertion is always respected (FIFO), even after an escalation or demotion.
-
-**`RevPriority` newtype:** `BTreeMap` sorts ascending; higher-numeric priorities should sort
-first. `RevPriority(u8)` stores `u8::MAX - priority_value`, inverting the sort order with
-zero runtime cost.
-
-**`PriorityHandle` with `Weak` reference:** handles returned by `push()` hold only a
-`Weak<Mutex<DynamicPriorityScheduler>>`, so they do not prevent the scheduler from being
-dropped and cannot cause reference cycles. `reprioritize()` returns `false` gracefully when
-either the scheduler or the task is already gone.
-
-**Anti-starvation with `EscalationPolicy`:** a tick counter drives periodic escalation passes
-that bump `Low → Normal` and `Normal → High`. Callers invoke `policy.tick()` each scheduler
-loop iteration. The tick interval and age thresholds are configurable; `escalate()` can also
-be called directly for immediate passes.
-
-### Hardware Topology: Backend-Trait Abstraction
-
-The topology layer uses a trait object to provide a single API regardless of whether hwloc is
-available at compile time:
-
-```rust
-pub trait HwTopology: Send + Sync {
-    fn numa_nodes(&self)  -> &[NumaNode];
-    fn cpu_count(&self)   -> usize;
-    fn packages(&self)    -> Vec<PackageInfo>;
-    fn cache_info(&self)  -> Vec<CacheInfo>;
-    fn bind_thread(&self, cpus: &[usize]) -> Result<(), BindError>;
-    fn numa_node_for_cpu(&self, cpu: usize) -> Option<usize>;
-    fn is_hwloc_backed(&self) -> bool;
-    fn backend_name(&self)   -> &'static str;
-}
-```
-
-`TopologyProvider::detect()` selects the backend at startup:
-
-```
---features hwloc  →  tries HwlocBackend (hwloc2 = "2.2.0")
-                      falls back to SysfsBackend on hwloc init failure
-no feature flag   →  SysfsBackend always (zero extra system dependency)
-```
-
-**hwloc2 2.2.0 API notes:**
-- `CpuBindFlags::THREAD` (not `CPUBIND_THREAD`) — binds the calling OS thread
-- Cache attributes via `obj.cache_attributes()` → `TopologyCacheAttributes`
-  (`.size()`, `.line_size()`, `.associativity()`)
-- Memory via `obj.memory().local_memory()` (not `obj.attr().numanode()`)
-- `CpuSet` (= `Bitmap`) iteration: `cpuset.iter()` yields `u32` indices
-
-**SysfsBackend** reads `/sys/devices/system/cpu/cpuN/cache/indexM/{level,size,coherency_line_size,shared_cpu_list}` on Linux, deduplicating cache entries by selecting only the instance where the current CPU equals `min(shared_cpus)`. Falls back to a single synthetic L3 entry on non-Linux or when sysfs is unavailable.
-
-**`HwlocWorkerAffinity`** maps each worker ID to a CPU set using one of five strategies:
-
-| Strategy | Description |
-|---|---|
-| `None` | No binding; OS scheduler decides |
-| `NUMARoundRobin` | Distribute workers evenly across NUMA nodes |
-| `NUMADense` | Fill each NUMA node before moving to the next |
-| `PhysicalCores` | Pin to physical cores only (skip HT siblings, heuristic) |
-| `L3CacheDomain` | Assign workers to L3 cache sharing groups |
+the call causes the thread to block on a mutex it already owns.
 
 ### Pluggable GPU Backend (`ComputeBackend` trait)
 
-The GPU layer is built around a single trait with runtime dispatch:
+The GPU layer is built around a single trait:
 
 ```rust
 pub trait ComputeBackend: Send + Sync + fmt::Debug + 'static {
     fn kind(&self) -> BackendKind;
     fn alloc_bytes(&self, size: usize) -> Result<DeviceBuffer, GpuError>;
-    fn htod_sync(&self, ...) -> Result<(), GpuError>;
-    fn dtoh_sync(&self, ...) -> Result<(), GpuError>;
-    unsafe fn htod_async(&self, ..., stream: &DeviceStream) -> Result<(), GpuError>;
-    unsafe fn dtoh_async(&self, ..., stream: &DeviceStream) -> Result<(), GpuError>;
+    fn htod_sync(&self, src: *const c_void, bytes: usize, dst: &DeviceBuffer) -> Result<(), GpuError>;
+    fn dtoh_sync(&self, src: &DeviceBuffer, dst: *mut c_void, bytes: usize) -> Result<(), GpuError>;
+    unsafe fn htod_async(..., stream: &DeviceStream) -> Result<(), GpuError>;
+    unsafe fn dtoh_async(..., stream: &DeviceStream) -> Result<(), GpuError>;
     fn create_stream(&self) -> Result<DeviceStream, GpuError>;
     fn synchronize_device(&self) -> Result<(), GpuError>;
     fn memory_info(&self) -> Result<(usize, usize), GpuError>;
 }
 ```
 
-Trait-object dispatch is chosen over monomorphization because backends are selected at runtime
-via `probe_backend()` (CUDA → ROCm → OpenCL → Stub), and the vtable cost is negligible
-compared to any GPU operation.
+Backends are selected at **runtime** via `probe_backend()` (CUDA → ROCm → OpenCL → Stub).
+The vtable cost is negligible compared to any real GPU operation and user code is
+backend-agnostic — switching hardware requires changing one line.
 
-### Async Transfers
+### Real-time Dashboard (`src/dashboard.rs`)
 
-Two levels of async GPU transfer:
-
-1. **`unsafe` stream-scoped** (`copy_from_host_async`): enqueues work on a `GpuStream`,
-   returns immediately. Caller guarantees the host slice outlives `stream.synchronize()`.
-2. **Safe owned** (`copy_from_host_async_owned`): takes ownership of `Vec<T>`, runs on
-   `tokio::task::spawn_blocking`, returns `(GpuBuffer, Vec<T>)`.
-
----
-
-## Module Structure
+The dashboard is a zero-dependency HTTP server built on `std::net::TcpListener`:
 
 ```
-src/
-├── lib.rs                  — Public API, re-exports, feature gates
-├── executor.rs             — Work-stealing thread pool
-├── taskflow.rs             — DAG construction
-├── task.rs                 — Task nodes, handles, dependency tracking
-├── scheduler.rs            — Scheduler trait, FifoScheduler, PriorityScheduler,
-│                             RoundRobinScheduler
-│
-├── advanced.rs             — Priority enum, CancellationToken, TaskMetadata
-├── preemptive.rs           — PreemptiveCancellationToken, DeadlineGuard,
-│                             with_deadline, signal preemption (Linux)
-├── dynamic_priority.rs     — DynamicPriorityScheduler, SharedDynamicScheduler,
-│                             PriorityHandle, EscalationPolicy
-├── hwloc_topology.rs       — TopologyProvider, HwTopology trait, HwlocBackend,
-│                             SysfsBackend, HwlocWorkerAffinity, AffinityStrategy
-├── numa.rs                 — NumaTopology, NumaNode, NumaPinning (sysfs-level)
-│
-├── subflow.rs              — Nested task graphs
-├── condition.rs            — Conditional branching, Loop
-├── pipeline.rs             — ConcurrentPipeline, stage types
-├── typed_pipeline.rs       — TypeSafePipeline, PipelineBuilder
-├── composition.rs          — Composition, CompositionBuilder, parameterization
-├── algorithms.rs           — Parallel for_each, reduce, transform, sort, scan
-│
-├── gpu.rs                  — GpuDevice, GpuBuffer<T>, GpuTaskConfig (public API)
-├── gpu_backend.rs          — ComputeBackend trait, BackendKind, DeviceBuffer
-├── gpu_stream.rs           — GpuStream, StreamPool, StreamSet, StreamGuard
-├── gpu_cuda_backend.rs     — CUDA backend (feature = "gpu")
-├── gpu_opencl.rs           — OpenCL backend (feature = "opencl")
-├── gpu_rocm.rs             — ROCm/HIP backend (feature = "rocm")
-│
-├── profiler.rs             — Profiler, ExecutionProfile, TaskStats
-├── visualization.rs        — DOT / SVG / HTML export
-├── monitoring.rs           — PerformanceMetrics, worker utilization
-├── metrics.rs              — Metrics, MetricsSummary
-├── debug.rs                — DebugLogger, LogLevel, LogEntry
-│
-├── async_executor.rs       — AsyncExecutor (feature = "async")
-├── cycle_detection.rs      — CycleDetector
-└── future.rs               — TaskflowFuture
+DashboardServer::start()
+  ├── Listener thread   — accepts TCP, dispatches per-connection handlers
+  ├── Collector thread  — samples PerformanceMetrics every N ms into a ring-buffer
+  └── Per-connection handlers
+        GET /         → self-contained HTML+JS+CSS (no CDN, no external assets)
+        GET /events   → SSE stream (replays ring-buffer history, then live)
+        GET /snapshot → one-shot JSON snapshot (polling fallback)
+```
+
+The embedded page uses the browser's native `EventSource` API and `<canvas>` for a live
+throughput line chart and worker utilisation bar chart, all in ~150 lines of ES5 JavaScript.
+`num_workers` is passed explicitly at construction time because `PerformanceMetrics::num_workers`
+is a private field.
+
+### Flamegraph Generation (`src/flamegraph.rs`)
+
+Produces fully self-contained interactive SVG flamegraphs with zero runtime dependencies:
+
+```
+FlamegraphGenerator
+  ├── from_profile(ExecutionProfile)  — tasks grouped per worker, depth from num_dependencies
+  └── from_folded("a;b;c N" text)     — standard perf/dtrace folded-stacks format
+
+FrameTree  — recursive Frame { name, total, self_samples, children }
+  └── add_child() merges frames with identical names (aggregation)
+
+build_svg() — produces interactive SVG with:
+  • Click-to-zoom (narrows the x-axis to the selected subtree)
+  • Ctrl+click resets to full view
+  • Search/highlight by frame name (dims non-matching frames)
+  • Deterministic colour palette: "hot" (red/orange), "cool" (blue/green), "purple"
+  • Hover <title> tooltips: name + % total + self-time
+```
+
+Raw strings use `r##"..."##` throughout so that CSS/JS hex colour literals (`"#1a1d27"`)
+never accidentally terminate the raw string delimiter.
+
+### Automated Regression Detection (`src/regression.rs`)
+
+Statistical regression detection with no external dependencies:
+
+```
+Baseline                               ← serialisable performance snapshot
+  ├── from_profile(profile, label)     — captures total, avg, P50/P95/P99, efficiency
+  ├── save(path) / load(path)          — hand-rolled JSON (no serde dep)
+  └── to_json() / from_json()
+
+RegressionThresholds                   ← per-metric % budgets
+  ├── default()   10% total, 15% P95, 20% P99
+  ├── strict()    5%  total, 8%  P95, 10% P99
+  └── lenient()   20% total, 30% P95, 40% P99
+
+RegressionDetector::detect(profile) → RegressionReport
+  ├── comparisons[]  all metrics with baseline / current / Δ%
+  ├── violations[]   WARNING (> threshold) or CRITICAL (> 2× threshold)
+  ├── summary()      one-liner for CI stdout
+  ├── report()       human-readable table
+  └── to_json()      machine-readable artefact for diff storage
+```
+
+### `DynamicPriorityScheduler` dual-index
+
+```
+index:   BTreeMap<(RevPriority, SeqNum), TaskId>  O(log n) push / pop
+reverse: HashMap<TaskId, (RevPriority, SeqNum)>   O(1) lookup for reprioritize
+
+PriorityHandle ──weak──► SharedDynamicScheduler
+                          reprioritize() / cancel() without owning the queue
+
+EscalationPolicy ──tick──► sched.reprioritize(id, bumped_priority)
+                            anti-starvation for Low / Normal tasks
+```
+
+### Hardware topology
+
+```
+TopologyProvider::detect()
+  ├── --features hwloc → HwlocBackend  (hwloc2 = "2.2.0")
+  └── default          → SysfsBackend  (/sys/devices/system/cpu/*/cache/)
+
+HwlocWorkerAffinity
+  ├── cpus_for_worker(id) → Vec<usize>
+  └── pin_current_thread(id) → pthread_setaffinity_np (Linux)
+                                hwloc set_cpubind THREAD (hwloc backend)
+```
+
+### GPU backend probe
+
+```
+GpuDevice  ──Arc<dyn ComputeBackend>──►  CudaBackend   (--features gpu)
+                                          OpenCLBackend  (--features opencl)
+                                          RocmBackend    (--features rocm)
+                                          StubBackend    (always)
 ```
 
 ---
@@ -388,6 +393,8 @@ src/
 | `TopologyProvider` | immutable after `detect()` | `bind_thread` is per-thread, no shared state |
 | Work-stealing deques | `crossbeam::deque` | Lock-free; LIFO own-queue, FIFO steal |
 | Task dependency counters | `AtomicUsize` | `Release` on decrement, `Acquire` on zero-check |
+| `DashboardServer` collector | `Arc<Mutex<VecDeque>>` | Lock held only during ring-buffer push/pop |
+| `RegressionDetector` | immutable after construction | `detect()` takes `&self`, fully re-entrant |
 
 ---
 
@@ -404,6 +411,49 @@ src/
 | `TopologyProvider::detect` | one-time | Amortized across all workers |
 | `HwlocWorkerAffinity::cpus_for_worker` | O(nodes) | Proportional to NUMA node count |
 | `bind_thread` (Linux) | O(cpus) | One `pthread_setaffinity_np` syscall |
+| `FlamegraphGenerator::from_profile` | O(T log T) | Sort tasks by start time per worker |
+| `RegressionDetector::detect` | O(T log T) | Dominated by percentile sort |
+| Dashboard SSE push | O(1) | Append to ring-buffer, no global lock on hot path |
+
+---
+
+## Comparison with C++ TaskFlow
+
+| Feature | C++ TaskFlow | TaskFlow-RS |
+|---|:---:|:---:|
+| Task Graphs | ✅ | ✅ |
+| Work-Stealing | ✅ | ✅ |
+| Subflows | ✅ | ✅ |
+| Condition Tasks | ✅ | ✅ |
+| Parallel Algorithms | ✅ | ✅ |
+| Async Tasks | ✅ | ✅ |
+| Pipeline | ✅ | ✅ |
+| GPU — CUDA / OpenCL / ROCm | ✅ | ✅ |
+| Async GPU Transfers | ✅ | ✅ |
+| Multiple GPU Streams | ✅ | ✅ |
+| Task Priorities | ✅ | ✅ |
+| Cooperative Cancellation | ✅ | ✅ |
+| Preemptive Cancellation | ✅ | ✅ |
+| Dynamic Priority Adjustment | ✅ | ✅ |
+| Hardware Topology (hwloc) | ✅ | ✅ |
+| NUMA-Aware Scheduling | ✅ | ✅ |
+| Real-time Dashboard | ➖ | ✅ |
+| Interactive Flamegraphs | ➖ | ✅ |
+| Automated Regression Detection | ➖ | ✅ |
+
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [DESIGN.md](DESIGN.md) | Architecture, implementation status, design decisions |
+| [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) | Priorities, cancellation, schedulers, NUMA |
+| [GPU.md](GPU.md) | Full GPU API: backends, streams, async transfers |
+| [GPU_SETUP.md](GPU_SETUP.md) | CUDA version config, ROCm install, troubleshooting |
+| [ASYNC_TASKS.md](ASYNC_TASKS.md) | Async executor and task documentation |
+| [PIPELINE.md](PIPELINE.md) | Concurrent pipeline documentation |
+| [TOOLING.md](TOOLING.md) | Profiler, visualization, monitoring, dashboard, flamegraphs, regression |
 
 ---
 
@@ -416,6 +466,10 @@ src/
 - Per-cache-domain work queues for L3-local task stealing
 - Unified / pinned GPU memory
 - Automatic GPU kernel generation
-- Real-time performance dashboard
-- Flamegraph generation
-- Automated performance regression detection
+- Automatic profiler integration into executor (zero-instrumentation profiling)
+- JSON export format for `ExecutionProfile`
+- Integration with external monitoring systems (Prometheus, OpenTelemetry)
+
+## License
+
+MIT

@@ -42,6 +42,9 @@ task-parallel programming library with heterogeneous CPU/GPU support.
 - ✅ **Preemptive Cancellation** — Watchdog timeouts, RAII deadline guards, signal preemption
 - ✅ **Dynamic Priority Adjustment** — O(log n) live reprioritization of queued tasks
 - ✅ **Hardware Topology Integration** — hwloc2 / sysfs cache hierarchy, NUMA binding, CPU affinity
+- ✅ **Real-time Dashboard** — HTTP server with SSE; live throughput chart and worker utilisation bars
+- ✅ **Flamegraph Generation** — Interactive SVG flamegraphs from profiles or folded stacks
+- ✅ **Automated Regression Detection** — Statistical baseline comparison with JSON persistence
 - ✅ **Tooling** — Profiler, DOT/SVG/HTML visualization, performance monitoring, debug logging
 
 ---
@@ -56,7 +59,7 @@ taskflowrs = "0.1.0"
 ### Basic task graph
 
 ```rust
-use taskflow_rs::{Executor, Taskflow};
+use taskflowrs::{Executor, Taskflow};
 
 fn main() {
     let mut executor = Executor::new(4);
@@ -84,290 +87,134 @@ fn main() {
 TaskFlow-RS provides three escalating levels of cancellation, all sharing the same
 `PreemptiveCancellationToken` type.
 
-### Level 1 — Cooperative (polling)
-
 ```rust
-use taskflow_rs::PreemptiveCancellationToken;
-
-let token = PreemptiveCancellationToken::new();
-let t = token.clone();
-
-std::thread::spawn(move || {
-    for chunk in big_data.chunks(4096) {
-        t.check()?;          // returns Err(Preempted) when cancelled
-        process(chunk);
-    }
-    Ok(())
-});
-
-token.cancel_with("user requested stop");
-```
-
-### Level 2 — Watchdog timeout
-
-```rust
-use taskflow_rs::PreemptiveCancellationToken;
+use taskflowrs::preemptive::PreemptiveCancellationToken;
 use std::time::Duration;
 
 let token = PreemptiveCancellationToken::new();
 
-// Automatically cancel after 500 ms — no manual polling needed.
-token.cancel_after_with(Duration::from_millis(500), "budget exceeded");
+// Layer 1 — cooperative: task checks the flag manually
+token.check()?;
 
-// The task checks at its own pace:
-let t = token.clone();
-std::thread::spawn(move || {
-    loop {
-        t.check()?;
-        do_work();
-    }
-    Ok(())
-});
-```
+// Layer 2 — watchdog: fires automatically after a deadline
+token.cancel_after(Duration::from_millis(500));
 
-### Level 3 — RAII deadline guard
-
-```rust
-use taskflow_rs::PreemptiveCancellationToken;
-use std::time::Duration;
-
-let token = PreemptiveCancellationToken::new();
-
-{
-    // Guard cancels the token when this scope exits after the budget.
-    let _guard = token.deadline_guard(Duration::from_millis(100));
-    expensive_computation();
-}   // ← token.cancel() fires here if elapsed > 100 ms
-
-// Or use the scoped helper for a closure:
-let result = taskflow_rs::with_deadline(Duration::from_secs(2), |tok| {
-    for item in dataset {
-        tok.check()?;
-        process(item);
-    }
-    Ok(total)
-});
-```
-
-### Token reuse
-
-```rust
-token.cancel_after(Duration::from_millis(50));
-// ... run task ...
-token.reset();   // clear the cancelled flag and reason
-token.cancel_after(Duration::from_millis(50));
-// ... run again ...
-```
-
-### Signal-based preemption (Linux)
-
-```rust
-// Call once at program startup:
-unsafe { PreemptiveCancellationToken::install_signal_handler(); }
-
-// In the task, check the per-thread SIGUSR2 flag:
-PreemptiveCancellationToken::check_signal()?;
-
-// From another thread, preempt a specific OS thread:
-PreemptiveCancellationToken::signal_preempt_thread(pthread_id);
-```
-
-**Run the demo:**
-
-```bash
-cargo run --example preemptive_cancellation
+// Layer 3 — RAII deadline guard (scope-bound)
+let _guard = token.deadline_guard(Duration::from_secs(2));
 ```
 
 ---
 
-## Dynamic Priority Adjustment
+## Real-time Dashboard
 
-`SharedDynamicScheduler` allows the priority of any queued task to be changed in **O(log n)**
-at any time, including from other threads.
-
-### Basic usage
-
-```rust
-use taskflow_rs::{SharedDynamicScheduler, Priority};
-
-let sched = SharedDynamicScheduler::new();
-
-sched.push(1, Priority::Low);
-sched.push(2, Priority::Normal);
-let handle = sched.push(3, Priority::Low);
-
-// Task 3 became urgent — escalate it before the executor picks it up.
-handle.reprioritize(Priority::Critical);
-
-// Pop order: 3 (Critical), 2 (Normal), 1 (Low)
-while let Some(task_id) = sched.pop() {
-    println!("executing {}", task_id);
-}
-```
-
-### FIFO ordering within equal priority
-
-Sequence numbers assigned at push time are preserved through reprioritization, so tasks at
-the same priority level always execute in insertion order:
+`DashboardServer` starts an HTTP server that streams live metrics to any browser via
+Server-Sent Events. No external JavaScript libraries or CDN required — the page is
+entirely self-contained.
 
 ```rust
-let h_old = sched.push(10, Priority::Normal);  // seq=0
-let _h_new = sched.push(20, Priority::Normal); // seq=1
+use std::sync::Arc;
+use taskflowrs::{
+    monitoring::PerformanceMetrics,
+    dashboard::{DashboardServer, DashboardConfig},
+};
 
-// Escalate both to High — seq=0 stays with task 10.
-h_old.reprioritize(Priority::High);
-sched.push(30, Priority::High); // seq=2
+let metrics = Arc::new(PerformanceMetrics::new(4));
+metrics.start();
 
-// Pop order: 10 (High, seq=0), 30 (High, seq=2), 20 (Normal)
-```
-
-### Cancelling a queued task
-
-```rust
-let handle = sched.push(99, Priority::High);
-
-// Changed our mind — remove it before execution.
-handle.cancel();
-assert!(!handle.is_pending());
-```
-
-### Anti-starvation escalation policy
-
-```rust
-use taskflow_rs::EscalationPolicy;
-
-let mut policy = EscalationPolicy::new(
-    sched.clone(),
-    /* tick_interval   */ 100,   // run escalation every 100 ticks
-    /* low_age_ticks   */ 500,   // Low  → Normal after 500 ticks
-    /* normal_age_ticks */ 1000, // Normal → High  after 1000 ticks
+let server = DashboardServer::new(
+    Arc::clone(&metrics),
+    4, // num_workers
+    DashboardConfig { port: 9090, ..Default::default() },
 );
+let handle = server.start(); // non-blocking
 
-// Call inside the scheduler loop:
-loop {
-    policy.tick();
-    if let Some(id) = sched.pop() {
-        execute(id);
-    }
-}
+println!("Dashboard → http://localhost:9090");
+
+// … run your executor, record metrics …
+
+handle.stop();
 ```
 
-**Run the demo:**
-
-```bash
-cargo run --example dynamic_priority
-```
+The dashboard provides:
+- **Live throughput chart** (tasks/sec over a rolling 60 s window)
+- **Worker utilisation bars** (colour-coded: green > 80%, yellow > 40%, red otherwise)
+- **Stat cards** — tasks completed, throughput, avg task duration, steal rate
+- **SSE history replay** — new clients immediately receive the full history buffer
 
 ---
 
-## Hardware Topology Integration
+## Flamegraph Generation
 
-`TopologyProvider` exposes full hardware topology (NUMA nodes, CPU packages, L1/L2/L3
-cache hierarchy) and can pin threads to specific CPU sets.
+`FlamegraphGenerator` produces fully interactive SVG flamegraphs with zero external
+dependencies. The output opens in any browser and supports click-to-zoom, search/highlight,
+and hover tooltips.
 
-### Topology discovery
-
-```rust
-use taskflow_rs::{TopologyProvider, HwTopology};
-
-let topo = TopologyProvider::detect();
-// Uses hwloc2 when compiled with --features hwloc,
-// falls back to /sys parsing otherwise.
-
-println!("Backend:    {}", topo.backend_name());   // "hwloc2 2.2.0" or "sysfs-fallback"
-println!("CPUs:       {}", topo.cpu_count());
-println!("NUMA nodes: {}", topo.numa_nodes().len());
-
-for node in topo.numa_nodes() {
-    let mem = node.memory_bytes
-        .map(|b| format!("{} MB", b / 1_048_576))
-        .unwrap_or_else(|| "unknown".into());
-    println!("  Node {}: {} CPUs, memory={}", node.id, node.cpus.len(), mem);
-}
-
-for pkg in topo.packages() {
-    println!("  Socket {}: {} CPUs, NUMA={:?}", pkg.id, pkg.cpus.len(), pkg.numa_nodes);
-}
-
-for cache in topo.cache_info() {
-    println!("  L{}: {} KB, line={} B, shared by {} CPUs",
-        cache.level, cache.size_kb, cache.line_size, cache.shared_cpus.len());
-}
-```
-
-### Worker CPU affinity
+### From an `ExecutionProfile`
 
 ```rust
-use taskflow_rs::{TopologyProvider, HwlocWorkerAffinity, AffinityStrategy};
+use taskflowrs::flamegraph::{FlamegraphGenerator, FlamegraphConfig};
 
-let topo   = TopologyProvider::detect();
-let num_workers = 8;
-let affinity = HwlocWorkerAffinity::new(topo, AffinityStrategy::NUMADense, num_workers);
+let gen = FlamegraphGenerator::new(FlamegraphConfig {
+    title: "My Taskflow Run".to_string(),
+    palette: "cool".to_string(), // "hot" | "cool" | "purple"
+    ..Default::default()
+});
 
-// Inside each worker thread at startup:
-affinity.pin_current_thread(worker_id)?;
-
-// Or just query the CPU set without binding:
-let cpus = affinity.cpus_for_worker(worker_id);
-println!("Worker {} → CPUs {:?}", worker_id, cpus);
+gen.save_from_profile(&profile, "flamegraph.svg")?;
+// open flamegraph.svg in any browser
 ```
 
-Available strategies:
+### From folded stacks (perf / dtrace compatible)
 
-| Strategy | Behaviour |
-|---|---|
-| `None` | No binding; OS decides |
-| `NUMARoundRobin` | Distribute workers evenly across NUMA nodes |
-| `NUMADense` | Fill each NUMA node before moving to the next |
-| `PhysicalCores` | Pin to physical cores; skip hyperthreading siblings |
-| `L3CacheDomain` | Assign workers to L3 cache sharing groups |
-
-### Enabling hwloc
-
-```bash
-# Ubuntu / Debian
-sudo apt install libhwloc-dev
-
-# Fedora / RHEL
-sudo dnf install hwloc-devel
-
-# macOS
-brew install hwloc
-
-# Build with full hwloc support
-cargo build --features hwloc
+```rust
+// Standard "stack;frame N" format — compatible with perf-script | stackcollapse-perf
+let folded = std::fs::read_to_string("perf.folded")?;
+gen.save_from_folded(&folded, "flamegraph.svg")?;
 ```
 
-Without `--features hwloc` the sysfs fallback is used automatically — no code changes
-required. `topo.is_hwloc_backed()` returns `false` so callers can log the difference.
-
-**Run the demo:**
-
-```bash
-cargo run --example hardware_topology             # sysfs fallback
-cargo run --features hwloc --example hardware_topology  # full hwloc
-```
+SVG features:
+- **Click** a frame to zoom into its subtree
+- **Ctrl+click** (or press Reset) to restore the full view
+- **Search box** dims non-matching frames in real time
+- **Deterministic colours** — same frame name always gets the same colour
 
 ---
 
-## Static Task Priorities
+## Automated Regression Detection
 
-For simpler use cases where priorities are fixed at enqueue time, use the built-in
-`PriorityScheduler`:
+`RegressionDetector` compares a finished `ExecutionProfile` against a stored `Baseline`
+and produces a structured `RegressionReport` suitable for CI pipelines.
 
 ```rust
-use taskflow_rs::{PriorityScheduler, Scheduler, Priority};
+use taskflowrs::regression::{Baseline, RegressionDetector, RegressionThresholds};
 
-let mut scheduler = PriorityScheduler::new();
-scheduler.push(1, Priority::Low);
-scheduler.push(2, Priority::High);
-scheduler.push(3, Priority::Critical);
+// ── First run: record the baseline ──────────────────────────────────────────
+let baseline = Baseline::from_profile(&profile, "v1.2.0");
+baseline.save("perf_baseline.json")?;
 
-// Pop order: 3 (Critical), 2 (High), 1 (Low)
+// ── Subsequent runs: detect regressions ─────────────────────────────────────
+let baseline = Baseline::load("perf_baseline.json")?;
+let detector = RegressionDetector::new(baseline, RegressionThresholds::default());
+let report   = detector.detect(&current_profile);
+
+println!("{}", report.report());
+
+// Fail CI on any regression
+assert!(report.passed, "Performance regression detected!");
+
+// Save JSON artefact for diff tracking
+std::fs::write("regression_report.json", report.to_json())?;
 ```
 
-For live reprioritization use `SharedDynamicScheduler` instead — it implements the same
-`Scheduler` trait and is a drop-in replacement.
+### Threshold presets
+
+| Preset | Total | Avg | P95 | P99 | Notes |
+|---|---|---|---|---|---|
+| `default()` | 10% | 10% | 15% | 20% | Balanced — recommended starting point |
+| `strict()` | 5% | 5% | 8% | 10% | Critical paths; fail on small regressions |
+| `lenient()` | 20% | 20% | 30% | 40% | Nightly builds; noise-tolerant |
+
+Violations are classified as **WARNING** (> threshold) or **CRITICAL** (> 2× threshold).
 
 ---
 
@@ -399,13 +246,10 @@ cargo build
 ### Usage
 
 ```rust
-use taskflow_rs::{GpuDevice, GpuBuffer, BackendKind};
+use taskflowrs::{GpuDevice, GpuBuffer, BackendKind};
 
 // Auto-select: CUDA → ROCm → OpenCL → Stub
 let device = GpuDevice::new(0)?;
-
-// Force a specific backend
-let device = GpuDevice::with_backend(0, BackendKind::OpenCL)?;
 
 // Allocate and transfer
 let mut buf: GpuBuffer<f32> = GpuBuffer::allocate(&device, 1024)?;
@@ -423,12 +267,12 @@ stream.synchronize()?;
 
 ```toml
 [dependencies]
-taskflow-rs = { version = "0.2", features = ["async"] }
+taskflowrs = { version = "0.1", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
 ```rust
-use taskflow_rs::{AsyncExecutor, Taskflow};
+use taskflowrs::{AsyncExecutor, Taskflow};
 
 #[tokio::main]
 async fn main() {
@@ -449,7 +293,7 @@ async fn main() {
 ## Tooling
 
 ```rust
-use taskflow_rs::{Profiler, generate_dot_graph, PerformanceMetrics};
+use taskflowrs::{Profiler, generate_dot_graph, PerformanceMetrics};
 
 // Profiling
 let profiler = Profiler::new(4);
@@ -458,14 +302,29 @@ executor.run(&taskflow).wait();
 let profile = profiler.get_profile().unwrap();
 println!("{}", profile.summary());
 
-// Visualization
-generate_dot_graph(&taskflow, "graph.dot");
-// dot -Tsvg graph.dot -o graph.svg
+// DOT / SVG / HTML visualization
+generate_dot_graph(&tasks, &deps, "taskflow.dot");
+// dot -Tsvg taskflow.dot -o taskflow.svg
 
-// Real-time metrics
-let metrics = PerformanceMetrics::new();
-println!("Tasks/sec: {:.1}", metrics.tasks_per_second());
-println!("Utilization: {:.1}%", metrics.worker_utilization() * 100.0);
+// Flamegraph (new)
+use taskflowrs::flamegraph::{FlamegraphGenerator, FlamegraphConfig};
+FlamegraphGenerator::new(FlamegraphConfig::default())
+    .save_from_profile(&profile, "flamegraph.svg")?;
+
+// Real-time dashboard (new)
+use taskflowrs::dashboard::{DashboardServer, DashboardConfig};
+let handle = DashboardServer::new(metrics, 4, DashboardConfig::default()).start();
+// → http://localhost:9090
+
+// Regression detection (new)
+use taskflowrs::regression::{Baseline, RegressionDetector, RegressionThresholds};
+let baseline = Baseline::from_profile(&profile, "v1.0");
+baseline.save("baseline.json")?;
+let report = RegressionDetector::new(
+    Baseline::load("baseline.json")?,
+    RegressionThresholds::default(),
+).detect(&new_profile);
+assert!(report.passed);
 ```
 
 ---
@@ -496,7 +355,10 @@ cargo test --features hwloc
 ## Examples
 
 ```bash
-# New scheduling features
+# New tooling features
+cargo run --example advanced_tooling_demo    # dashboard + flamegraph + regression
+
+# Advanced scheduling
 cargo run --example preemptive_cancellation
 cargo run --example dynamic_priority
 cargo run --example hardware_topology
@@ -544,62 +406,20 @@ EscalationPolicy ──tick──► sched.reprioritize(id, bumped_priority)
                             anti-starvation for Low / Normal tasks
 ```
 
-### Preemptive cancellation
+### Tooling layer
 
 ```
-PreemptiveCancellationToken
-  ├── Arc<AtomicBool>  ← check() fast path: one Acquire load
-  ├── Condvar          ← watchdog sleep / early wake on manual cancel
-  └── cancel_after()   ── spawns watchdog thread
-                           wait_timeout → drop(guard) → cancel_with_reason()
-                                          ↑ guard dropped BEFORE notify
-                                            (prevents self-deadlock)
+DashboardServer ──SSE──► browser (live charts, no CDN)
+  └── DashboardConfig { port, push_interval_ms, history_len, title }
+
+FlamegraphGenerator
+  ├── from_profile(ExecutionProfile) → interactive SVG
+  └── from_folded("a;b;c N")        → compatible with perf / dtrace
+
+RegressionDetector
+  ├── Baseline { total_us, avg_us, P50/P95/P99, efficiency } ← JSON file
+  └── detect(profile) → RegressionReport { violations, summary, to_json }
 ```
-
-### Hardware topology
-
-```
-TopologyProvider::detect()
-  ├── --features hwloc → HwlocBackend  (hwloc2 = "2.2.0")
-  └── default          → SysfsBackend  (/sys/devices/system/cpu/*/cache/)
-
-HwlocWorkerAffinity
-  ├── cpus_for_worker(id) → Vec<usize>
-  └── pin_current_thread(id) → pthread_setaffinity_np (Linux)
-                                hwloc set_cpubind THREAD (hwloc backend)
-```
-
-### GPU backend
-
-```
-GpuDevice  ──Arc<dyn ComputeBackend>──►  CudaBackend   (--features gpu)
-                                          OpenCLBackend  (--features opencl)
-                                          RocmBackend    (--features rocm)
-                                          StubBackend    (always)
-```
-
----
-
-## Comparison with C++ TaskFlow
-
-| Feature | C++ TaskFlow | TaskFlow-RS |
-|---|:---:|:---:|
-| Task Graphs | ✅ | ✅ |
-| Work-Stealing | ✅ | ✅ |
-| Subflows | ✅ | ✅ |
-| Condition Tasks | ✅ | ✅ |
-| Parallel Algorithms | ✅ | ✅ |
-| Async Tasks | ✅ | ✅ |
-| Pipeline | ✅ | ✅ |
-| GPU — CUDA / OpenCL / ROCm | ✅ | ✅ |
-| Async GPU Transfers | ✅ | ✅ |
-| Multiple GPU Streams | ✅ | ✅ |
-| Task Priorities | ✅ | ✅ |
-| Cooperative Cancellation | ✅ | ✅ |
-| Preemptive Cancellation | ✅ | ✅ |
-| Dynamic Priority Adjustment | ✅ | ✅ |
-| Hardware Topology (hwloc) | ✅ | ✅ |
-| NUMA-Aware Scheduling | ✅ | ✅ |
 
 ---
 
@@ -613,7 +433,7 @@ GpuDevice  ──Arc<dyn ComputeBackend>──►  CudaBackend   (--features gpu
 | [GPU_SETUP.md](GPU_SETUP.md) | CUDA version config, ROCm install, troubleshooting |
 | [ASYNC_TASKS.md](ASYNC_TASKS.md) | Async executor and task documentation |
 | [PIPELINE.md](PIPELINE.md) | Concurrent pipeline documentation |
-| [TOOLING.md](TOOLING.md) | Profiler, visualization, monitoring |
+| [TOOLING.md](TOOLING.md) | Profiler, visualization, monitoring, dashboard, flamegraphs, regression |
 
 ## License
 

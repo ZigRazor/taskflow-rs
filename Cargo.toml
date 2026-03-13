@@ -1,6 +1,6 @@
 [package]
 name = "taskflowrs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A Rust implementation of TaskFlow — task-parallel programming with heterogeneous GPU support"
 repository = "https://github.com/ZigRazor/taskflow-rs"
