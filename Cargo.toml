@@ -42,7 +42,7 @@ cudarc  = { version = "0.11", features = ["std", "driver"], optional = true }
 # ── OpenCL backend ────────────────────────────────────────────────────────────
 # opencl3 provides safe OpenCL 3.0 bindings.
 # Works with NVIDIA (via CUDA driver), AMD (ROCm), and Intel (oneAPI).
-opencl3 = { version = "0.9", optional = true }
+opencl3 = { version = "0.12", optional = true }
 
 # ── ROCm/HIP backend ─────────────────────────────────────────────────────────
 # No first-class Rust crate exists; we use raw FFI in gpu_rocm.rs.
